@@ -1,0 +1,29 @@
+{
+  "name": "Daily Founder Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/briefings/generate",
+        "method": "POST",
+        "jsonParameters": true,
+        "bodyParametersJson": "{ \"time_range_days\": 1 }"
+      },
+      "name": "Trigger Briefing Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Trigger Briefing Agent", "type": "main", "index": 0 }]]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "Competitor Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 12 }] }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/workflows/orchestrate",
+        "method": "POST",
+        "jsonParameters": true,
+        "bodyParametersJson": "[\n  { \"agent_type\": \"competitor_monitor\", \"input\": { \"competitor_name\": \"OpenAI\", \"website\": \"https://openai.com\" } },\n  { \"agent_type\": \"competitor_monitor\", \"input\": { \"competitor_name\": \"Anthropic\", \"website\": \"https://anthropic.com\" } }\n]"
+      },
+      "name": "Run Competitor Monitors",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Run Competitor Monitors", "type": "main", "index": 0 }]]
+    }
+  }
+}
