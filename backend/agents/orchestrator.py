@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 from agents.base import BaseAgent
 from agents.competitor_monitor import CompetitorMonitorAgent
 from agents.research_agent import ResearchAgent
 from agents.briefing_agent import BriefingAgent
 from agents.memory_agent import MemoryAgent
+from typing import Dict, Type
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-AGENT_REGISTRY: dict[str, type[BaseAgent]] = {
+AGENT_REGISTRY: Dict[str, Type[BaseAgent]] = {
     "competitor_monitor": CompetitorMonitorAgent,
     "research": ResearchAgent,
     "briefing": BriefingAgent,

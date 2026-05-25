@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 from supabase import create_client, Client
 from config import settings
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_client: Client | None = None
+_client = None
 
 
 def get_supabase() -> Client:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from apify_client import ApifyClient
 from config import settings
 from utils.logger import get_logger
@@ -5,7 +7,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = get_logger(__name__)
 
-_client: ApifyClient | None = None
+_client = None
 
 
 def get_apify_client() -> ApifyClient:

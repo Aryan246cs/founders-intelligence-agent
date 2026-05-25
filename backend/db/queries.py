@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from db.client import get_supabase
 from utils.logger import get_logger
 
