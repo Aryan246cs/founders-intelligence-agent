@@ -1,20 +1,28 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, BackgroundTasks
-from models.briefing import BriefingRequest
+from pydantic import BaseModel
+
 from agents.briefing_agent import BriefingAgent
 from db.queries import BriefingQueries
 
 router = APIRouter()
 
 
+class BriefingRequest(BaseModel):
+    time_range_days: int = 7
+    send_to_slack: bool = False
+
+
 @router.post("/generate")
 async def generate_briefing(req: BriefingRequest, background_tasks: BackgroundTasks):
-    """Generate a new founder briefing."""
+    """Queue a briefing generation task."""
     agent = BriefingAgent()
     background_tasks.add_task(
         agent.run,
         {
             "time_range_days": req.time_range_days,
-            "send_to_slack": True,
+            "send_to_slack": req.send_to_slack,
         },
     )
     return {"status": "queued"}

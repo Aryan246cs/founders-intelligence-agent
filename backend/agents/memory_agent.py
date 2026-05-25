@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any, Dict
+
 from agents.base import BaseAgent
 from db.queries import MemoryQueries
 
@@ -7,7 +11,7 @@ class MemoryAgent(BaseAgent):
 
     agent_type = "memory"
 
-    async def execute(self, input_data: dict) -> dict:
+    async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         action = input_data.get("action", "get")  # get | set | list
 
         if action == "set":

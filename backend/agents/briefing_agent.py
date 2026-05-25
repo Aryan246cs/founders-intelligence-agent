@@ -1,47 +1,56 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Dict
+
 from agents.base import BaseAgent
 from services import groq_service, slack_service
 from db.queries import ResearchQueries, BriefingQueries
-from datetime import datetime, timezone
 
+SYSTEM_PROMPT = """You are a strategic advisor to a startup founder.
+Based on recent research findings, generate a concise founder intelligence briefing in Markdown.
 
-SYSTEM_PROMPT = """You are a strategic advisor to a startup founder. Based on recent research findings,
-generate a concise founder briefing in Markdown format.
-
-Structure:
+Use this structure exactly:
 # Founder Intelligence Briefing — {date}
 
 ## Executive Summary
-(2-3 sentences)
+(2-3 sentences on the most important developments)
 
 ## Competitor Landscape
-(key competitor movements)
+(key competitor movements and what they mean)
 
 ## Market Trends
-(notable trends)
+(notable trends worth tracking)
 
 ## Strategic Opportunities
-(actionable opportunities)
+(specific, actionable opportunities for a founder)
 
 ## Recommended Actions
-(3-5 bullet points)
+- Action 1
+- Action 2
+- Action 3
 
-Be direct, specific, and founder-focused. Avoid fluff."""
+Be direct, specific, and founder-focused. No fluff."""
 
 
 class BriefingAgent(BaseAgent):
     agent_type = "briefing"
 
-    async def execute(self, input_data: dict) -> dict:
+    async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         time_range_days = input_data.get("time_range_days", 7)
-        send_to_slack = input_data.get("send_to_slack", True)
+        send_to_slack = input_data.get("send_to_slack", False)
 
         self._log("info", "Generating founder briefing")
 
-        # Pull recent findings
         findings = ResearchQueries.list_recent(limit=20)
-        findings_text = "\n\n".join(
-            f"- [{f['title']}]({f['source_url']}): {f['summary']}" for f in findings
-        )
+
+        if findings:
+            findings_text = "\n\n".join(
+                f"- [{f['title']}]({f.get('source_url', '')}): {f['summary']}"
+                for f in findings
+            )
+        else:
+            findings_text = "No recent research findings available. Generate a general AI startup landscape briefing."
 
         today = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
@@ -51,7 +60,6 @@ class BriefingAgent(BaseAgent):
             max_tokens=3000,
         )
 
-        # Persist briefing
         saved = BriefingQueries.save(
             {
                 "title": f"Founder Briefing — {today}",
@@ -62,7 +70,6 @@ class BriefingAgent(BaseAgent):
             }
         )
 
-        # Send to Slack
         slack_sent = False
         if send_to_slack:
             slack_sent = await slack_service.send_briefing(
@@ -71,6 +78,8 @@ class BriefingAgent(BaseAgent):
             )
             if slack_sent:
                 BriefingQueries.mark_sent(saved["id"])
+
+        self._log("info", "Briefing generated and saved")
 
         return {
             "briefing_id": saved["id"],

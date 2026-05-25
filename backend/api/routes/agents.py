@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from models.agent import AgentTaskCreate, AgentTaskResponse
+from models.agent import AgentTaskCreate
 from agents.orchestrator import get_agent
 from db.queries import AgentTaskQueries
 
@@ -8,11 +10,11 @@ router = APIRouter()
 
 @router.post("/run", response_model=dict)
 async def run_agent(task: AgentTaskCreate, background_tasks: BackgroundTasks):
-    """Dispatch an agent task. Runs in the background and returns the task ID."""
+    """Dispatch an agent task in the background. Returns task_id to poll for status."""
     db_task = AgentTaskQueries.create(task.agent_type.value, task.input)
     task_id = db_task["id"]
 
-    async def _run():
+    async def _run() -> None:
         agent = get_agent(task.agent_type.value)
         agent.task_id = task_id
         AgentTaskQueries.update_status(task_id, "running")

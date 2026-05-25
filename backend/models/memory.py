@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from pydantic import BaseModel
-from typing import Optional, Any
+from typing import Any, List, Optional
 from datetime import datetime
 
 
@@ -8,19 +10,6 @@ class MemoryEntry(BaseModel):
     key: str
     value: Any
     namespace: str = "default"
-    tags: list[str] = []
+    tags: List[str] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-
-
-class MemoryUpsert(BaseModel):
-    key: str
-    value: Any
-    namespace: str = "default"
-    tags: list[str] = []
-
-
-class MemoryQuery(BaseModel):
-    namespace: str = "default"
-    tags: list[str] = []
-    limit: int = 50

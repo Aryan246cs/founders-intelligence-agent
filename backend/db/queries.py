@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
 from db.client import get_supabase
 from utils.logger import get_logger
 
@@ -25,29 +28,34 @@ class AgentTaskQueries:
 
     @staticmethod
     def update_status(
-        task_id: str, status: str, result: dict = None, error: str = None
+        task_id: str,
+        status: str,
+        result: Optional[dict] = None,
+        error: Optional[str] = None,
     ) -> dict:
         db = get_supabase()
-        payload = {"status": status}
+        payload: Dict[str, Any] = {"status": status}
         if result is not None:
             payload["result"] = result
         if error is not None:
             payload["error"] = error
         if status in ("completed", "failed"):
-            payload["completed_at"] = "now()"
+            payload["completed_at"] = datetime.now(timezone.utc).isoformat()
         res = db.table("agent_tasks").update(payload).eq("id", task_id).execute()
         return res.data[0]
 
     @staticmethod
-    def get(task_id: str) -> dict | None:
+    def get(task_id: str) -> Optional[dict]:
         db = get_supabase()
-        res = db.table("agent_tasks").select("*").eq("id", task_id).single().execute()
-        return res.data
+        res = db.table("agent_tasks").select("*").eq("id", task_id).execute()
+        return res.data[0] if res.data else None
 
 
 class MemoryQueries:
     @staticmethod
-    def upsert(key: str, namespace: str, value: any, tags: list[str] = None) -> dict:
+    def upsert(
+        key: str, namespace: str, value: Any, tags: Optional[List[str]] = None
+    ) -> dict:
         db = get_supabase()
         res = (
             db.table("memory_entries")
@@ -57,7 +65,7 @@ class MemoryQueries:
                     "namespace": namespace,
                     "value": value,
                     "tags": tags or [],
-                    "updated_at": "now()",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 },
                 on_conflict="key,namespace",
             )
@@ -66,20 +74,19 @@ class MemoryQueries:
         return res.data[0]
 
     @staticmethod
-    def get(key: str, namespace: str = "default") -> dict | None:
+    def get(key: str, namespace: str = "default") -> Optional[dict]:
         db = get_supabase()
         res = (
             db.table("memory_entries")
             .select("*")
             .eq("key", key)
             .eq("namespace", namespace)
-            .single()
             .execute()
         )
-        return res.data
+        return res.data[0] if res.data else None
 
     @staticmethod
-    def list_by_namespace(namespace: str, limit: int = 50) -> list[dict]:
+    def list_by_namespace(namespace: str, limit: int = 50) -> List[dict]:
         db = get_supabase()
         res = (
             db.table("memory_entries")
@@ -88,7 +95,7 @@ class MemoryQueries:
             .limit(limit)
             .execute()
         )
-        return res.data
+        return res.data or []
 
 
 class ResearchQueries:
@@ -99,7 +106,7 @@ class ResearchQueries:
         return res.data[0]
 
     @staticmethod
-    def list_recent(limit: int = 20) -> list[dict]:
+    def list_recent(limit: int = 20) -> List[dict]:
         db = get_supabase()
         res = (
             db.table("research_findings")
@@ -108,7 +115,7 @@ class ResearchQueries:
             .limit(limit)
             .execute()
         )
-        return res.data
+        return res.data or []
 
 
 class BriefingQueries:
@@ -119,7 +126,7 @@ class BriefingQueries:
         return res.data[0]
 
     @staticmethod
-    def list_recent(limit: int = 10) -> list[dict]:
+    def list_recent(limit: int = 10) -> List[dict]:
         db = get_supabase()
         res = (
             db.table("briefings")
@@ -128,7 +135,7 @@ class BriefingQueries:
             .limit(limit)
             .execute()
         )
-        return res.data
+        return res.data or []
 
     @staticmethod
     def mark_sent(briefing_id: str) -> dict:
@@ -145,15 +152,23 @@ class BriefingQueries:
 class ExecutionLogQueries:
     @staticmethod
     def log(
-        task_id: str, agent_type: str, level: str, message: str, metadata: dict = None
+        task_id: Optional[str],
+        agent_type: str,
+        level: str,
+        message: str,
+        metadata: Optional[dict] = None,
     ):
-        db = get_supabase()
-        db.table("execution_logs").insert(
-            {
-                "task_id": task_id,
-                "agent_type": agent_type,
-                "level": level,
-                "message": message,
-                "metadata": metadata or {},
-            }
-        ).execute()
+        try:
+            db = get_supabase()
+            db.table("execution_logs").insert(
+                {
+                    "task_id": task_id,
+                    "agent_type": agent_type,
+                    "level": level,
+                    "message": message,
+                    "metadata": metadata or {},
+                }
+            ).execute()
+        except Exception as e:
+            # Never let logging failures crash the agent
+            logger.error("Failed to write execution log", error=str(e))

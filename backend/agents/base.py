@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
-from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 from db.queries import AgentTaskQueries, ExecutionLogQueries
 from utils.logger import get_logger
@@ -15,10 +14,10 @@ class BaseAgent(ABC):
 
     agent_type: str = "base"
 
-    def __init__(self):
-        self.task_id: str | None = None
+    def __init__(self) -> None:
+        self.task_id: Optional[str] = None
 
-    async def run(self, input_data: dict) -> dict:
+    async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a task record, execute, and persist the result."""
         task = AgentTaskQueries.create(self.agent_type, input_data)
         self.task_id = task["id"]
@@ -38,11 +37,11 @@ class BaseAgent(ABC):
             raise
 
     @abstractmethod
-    async def execute(self, input_data: dict) -> dict:
+    async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Implement agent-specific logic here."""
         ...
 
-    def _log(self, level: str, message: str, metadata: dict = None):
+    def _log(self, level: str, message: str, metadata: Optional[dict] = None) -> None:
         ExecutionLogQueries.log(
             task_id=self.task_id,
             agent_type=self.agent_type,

@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Optional
+
 import httpx
 from config import settings
 from utils.logger import get_logger
@@ -5,7 +9,7 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def trigger_workflow(workflow_name: str, payload: dict) -> dict | None:
+async def trigger_workflow(workflow_name: str, payload: dict) -> Optional[dict]:
     """Trigger an n8n workflow via its webhook URL."""
     url = f"{settings.n8n_webhook_base_url}/{workflow_name}"
 
