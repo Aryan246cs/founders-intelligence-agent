@@ -149,6 +149,114 @@ class BriefingQueries:
         return res.data[0]
 
 
+class WorkflowExecutionQueries:
+    """
+    Workflow-level execution records — one row per end-to-end workflow run.
+    Used by external orchestrators (n8n, schedulers) to track and poll run state.
+    """
+
+    @staticmethod
+    def create(trigger_source: str, request_summary: str) -> dict:
+        """Insert a new execution record in 'running' state and return it."""
+        db = get_supabase()
+        res = (
+            db.table("workflow_executions")
+            .insert(
+                {
+                    "trigger_source": trigger_source,
+                    "request_summary": request_summary,
+                    "status": "running",
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .execute()
+        )
+        return res.data[0]
+
+    @staticmethod
+    def complete(
+        execution_id: str,
+        *,
+        steps_total: int,
+        steps_completed: int,
+        plan_summary: str,
+        briefing_id: Optional[str],
+        briefing_available: bool,
+        slack_delivered: bool,
+        comparison_ran: bool,
+        has_competitor_changes: bool,
+        started_at: datetime,
+    ) -> dict:
+        """Mark an execution as completed and record timing + outcome fields."""
+        db = get_supabase()
+        now = datetime.now(timezone.utc)
+        duration_ms = int((now - started_at).total_seconds() * 1000)
+        res = (
+            db.table("workflow_executions")
+            .update(
+                {
+                    "status": "completed",
+                    "steps_total": steps_total,
+                    "steps_completed": steps_completed,
+                    "plan_summary": plan_summary,
+                    "briefing_id": briefing_id,
+                    "briefing_available": briefing_available,
+                    "slack_delivered": slack_delivered,
+                    "comparison_ran": comparison_ran,
+                    "has_competitor_changes": has_competitor_changes,
+                    "completed_at": now.isoformat(),
+                    "duration_ms": duration_ms,
+                }
+            )
+            .eq("id", execution_id)
+            .execute()
+        )
+        return res.data[0]
+
+    @staticmethod
+    def fail(execution_id: str, error: str, started_at: datetime) -> dict:
+        """Mark an execution as failed with an error message and timing."""
+        db = get_supabase()
+        now = datetime.now(timezone.utc)
+        duration_ms = int((now - started_at).total_seconds() * 1000)
+        res = (
+            db.table("workflow_executions")
+            .update(
+                {
+                    "status": "failed",
+                    "error": error,
+                    "completed_at": now.isoformat(),
+                    "duration_ms": duration_ms,
+                }
+            )
+            .eq("id", execution_id)
+            .execute()
+        )
+        return res.data[0]
+
+    @staticmethod
+    def get(execution_id: str) -> Optional[dict]:
+        """Fetch a single execution record by ID."""
+        db = get_supabase()
+        res = (
+            db.table("workflow_executions").select("*").eq("id", execution_id).execute()
+        )
+        return res.data[0] if res.data else None
+
+    @staticmethod
+    def list_recent(limit: int = 20) -> List[dict]:
+        """Return the most recent executions ordered by start time descending."""
+        db = get_supabase()
+        res = (
+            db.table("workflow_executions")
+            .select("*")
+            .order("started_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+
+
 class CompetitorSnapshotQueries:
     """
     Queries for competitor snapshot history stored in the competitor_snapshots table.
