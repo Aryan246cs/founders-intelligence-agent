@@ -1,50 +1,92 @@
 "use client";
 
-import { useState } from "react";
-import { setMemory, getMemory } from "@/lib/api";
+import { motion } from "framer-motion";
+import { Brain, Zap, TrendingUp, Database } from "lucide-react";
+import { MemoryDiffCard } from "@/components/memory/MemoryDiffCard";
+import { Badge } from "@/components/ui/badge";
+import { mockMemoryComparisons } from "@/lib/mock-data";
+
+const memoryStats = [
+  { label: "Total Snapshots", value: "2,104", icon: Database, color: "text-purple-400" },
+  { label: "Comparisons Run", value: "847", icon: Brain, color: "text-brand-400" },
+  { label: "Signals Detected", value: "63", icon: Zap, color: "text-amber-400" },
+  { label: "Competitors Tracked", value: "12", icon: TrendingUp, color: "text-emerald-400" },
+];
 
 export default function MemoryPage() {
-  const [form, setForm] = useState({ key: "", value: "", namespace: "default" });
-  const [lookup, setLookup] = useState({ key: "", namespace: "default" });
-  const [result, setResult] = useState<any>(null);
-  const [status, setStatus] = useState("");
-
-  const handleSet = async () => {
-    if (!form.key || !form.value) return;
-    let parsed: unknown = form.value;
-    try { parsed = JSON.parse(form.value); } catch {}
-    await setMemory(form.key, parsed, form.namespace);
-    setStatus(`Saved: ${form.namespace}/${form.key}`);
-  };
-
-  const handleGet = async () => {
-    if (!lookup.key) return;
-    const res = await getMemory(lookup.namespace, lookup.key);
-    setResult(res.data);
-  };
+  const withChanges = mockMemoryComparisons.filter((c) => c.hasChanges);
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-2xl font-bold">Memory</h1>
-      {status && <p className="text-sm text-brand-500">{status}</p>}
+    <div className="relative min-h-screen">
+      <div className="fixed inset-0 grid-bg pointer-events-none opacity-40" />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 space-y-3">
-          <h2 className="font-semibold">Set Memory</h2>
-          <input className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm" placeholder="Namespace" value={form.namespace} onChange={(e) => setForm({ ...form, namespace: e.target.value })} />
-          <input className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm" placeholder="Key" value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} />
-          <textarea className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm" rows={3} placeholder='Value (string or JSON)' value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} />
-          <button onClick={handleSet} className="bg-brand-500 text-white px-4 py-2 rounded text-sm">Save</button>
+      {/* Purple glow for memory page */}
+      <div className="fixed top-0 right-0 w-[400px] h-[400px] bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="relative px-8 py-8 space-y-8">
+        {/* Header */}
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Brain className="w-5 h-5 text-purple-400" />
+            <h1 className="text-2xl font-bold text-zinc-100">Memory History</h1>
+          </div>
+          <p className="text-zinc-500 text-sm max-w-xl">
+            The AI remembers, compares, and detects meaningful changes over time. Only high-signal intelligence is surfaced.
+          </p>
+        </motion.div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {memoryStats.map((stat, i) => {
+            const Icon = stat.icon;
+            return (
+              <motion.div
+                key={stat.label}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.07 }}
+                className="glass rounded-xl border border-zinc-800/60 p-5"
+              >
+                <Icon className={`w-5 h-5 ${stat.color} mb-3`} />
+                <p className="text-2xl font-bold text-zinc-100 tabular-nums">{stat.value}</p>
+                <p className="text-xs text-zinc-500 mt-1">{stat.label}</p>
+              </motion.div>
+            );
+          })}
         </div>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 space-y-3">
-          <h2 className="font-semibold">Get Memory</h2>
-          <input className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm" placeholder="Namespace" value={lookup.namespace} onChange={(e) => setLookup({ ...lookup, namespace: e.target.value })} />
-          <input className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm" placeholder="Key" value={lookup.key} onChange={(e) => setLookup({ ...lookup, key: e.target.value })} />
-          <button onClick={handleGet} className="bg-brand-500 text-white px-4 py-2 rounded text-sm">Lookup</button>
-          {result && (
-            <pre className="bg-gray-800 rounded p-3 text-xs overflow-auto">{JSON.stringify(result, null, 2)}</pre>
-          )}
+        {/* Intelligence note */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="rounded-xl bg-purple-500/5 border border-purple-500/15 px-5 py-4 flex items-start gap-3"
+        >
+          <Brain className="w-4 h-4 text-purple-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold text-purple-400 mb-1">Memory Intelligence System</p>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Only meaningful intelligence changes are surfaced. Low-signal comparisons (no significant changes) are suppressed automatically.
+              The system uses semantic similarity, keyword grouping, and fuzzy matching to detect what actually matters.
+            </p>
+          </div>
+        </motion.div>
+
+        {/* Comparisons */}
+        <div>
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-200">Intelligence Comparisons</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">Showing only runs with detected changes</p>
+            </div>
+            <Badge variant="warning">{withChanges.length} with changes</Badge>
+          </div>
+
+          <div className="space-y-4">
+            {withChanges.map((comparison, i) => (
+              <MemoryDiffCard key={comparison.id} comparison={comparison} index={i} />
+            ))}
+          </div>
         </div>
       </div>
     </div>

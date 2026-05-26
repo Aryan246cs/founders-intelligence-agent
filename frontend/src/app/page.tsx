@@ -1,76 +1,92 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getFindings, getBriefings, generateBriefing } from "@/lib/api";
+import { motion } from "framer-motion";
+import { Zap, Play } from "lucide-react";
+import { KpiCard } from "@/components/dashboard/KpiCard";
+import { PipelineViz } from "@/components/dashboard/PipelineViz";
+import { AgentStatusGrid } from "@/components/dashboard/AgentStatusGrid";
+import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
+import { ArchitecturePanel } from "@/components/dashboard/ArchitecturePanel";
+import { RecentBriefingsPanel } from "@/components/dashboard/RecentBriefingsPanel";
+import {
+  mockAgents,
+  mockBriefings,
+  mockActivityFeed,
+  kpiData,
+} from "@/lib/mock-data";
 
 export default function Dashboard() {
-  const [findings, setFindings] = useState<any[]>([]);
-  const [briefings, setBriefings] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    getFindings(5).then((r) => setFindings(r.data.findings ?? []));
-    getBriefings(3).then((r) => setBriefings(r.data.briefings ?? []));
-  }, []);
-
-  const handleGenerateBriefing = async () => {
-    setLoading(true);
-    await generateBriefing(7);
-    setLoading(false);
-    alert("Briefing queued — check Slack and the Briefings page.");
-  };
-
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <button
-          onClick={handleGenerateBriefing}
-          disabled={loading}
-          className="bg-brand-500 hover:bg-sky-400 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+    <div className="relative min-h-screen">
+      {/* Grid background */}
+      <div className="fixed inset-0 grid-bg pointer-events-none opacity-50" />
+
+      {/* Radial glow */}
+      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-brand-500/5 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="relative px-8 py-8 space-y-8">
+        {/* Hero */}
+        <motion.div
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="flex items-start justify-between"
         >
-          {loading ? "Generating..." : "Generate Briefing"}
-        </button>
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <motion.div
+                animate={{ scale: [1, 1.2, 1] }}
+                transition={{ duration: 2, repeat: Infinity }}
+                className="w-2 h-2 rounded-full bg-emerald-400"
+                style={{ boxShadow: "0 0 8px rgba(52,211,153,0.8)" }}
+              />
+              <span className="text-xs font-medium text-emerald-400 uppercase tracking-wider">System Operational</span>
+            </div>
+            <h1 className="text-3xl font-bold text-zinc-100 tracking-tight">
+              Founder Intelligence Agent
+            </h1>
+            <p className="text-zinc-500 mt-1.5 text-sm max-w-lg">
+              Autonomous competitive intelligence and execution platform. Monitoring, analyzing, and briefing — continuously.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800/60 border border-zinc-700/60 text-sm font-medium text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-all">
+              <Zap className="w-4 h-4" />
+              Run Workflow
+            </button>
+            <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-500 text-sm font-semibold text-white hover:bg-brand-400 transition-all shadow-glow-sm">
+              <Play className="w-4 h-4" />
+              Generate Briefing
+            </button>
+          </div>
+        </motion.div>
+
+        {/* KPI Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+          {kpiData.map((kpi, i) => (
+            <KpiCard key={kpi.label} {...kpi} index={i} />
+          ))}
+        </div>
+
+        {/* Pipeline */}
+        <PipelineViz />
+
+        {/* Main content grid */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          {/* Left: Agents + Briefings */}
+          <div className="xl:col-span-2 space-y-6">
+            <AgentStatusGrid agents={mockAgents} />
+            <RecentBriefingsPanel briefings={mockBriefings} />
+          </div>
+
+          {/* Right: Architecture + Activity */}
+          <div className="space-y-6">
+            <ActivityFeed events={mockActivityFeed} />
+            <ArchitecturePanel />
+          </div>
+        </div>
       </div>
-
-      <section>
-        <h2 className="text-lg font-semibold mb-3 text-gray-300">Recent Findings</h2>
-        {findings.length === 0 ? (
-          <p className="text-gray-500 text-sm">No findings yet. Run a research task to get started.</p>
-        ) : (
-          <ul className="space-y-3">
-            {findings.map((f) => (
-              <li key={f.id} className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                <p className="font-medium text-sm">{f.title}</p>
-                <p className="text-gray-400 text-xs mt-1">{f.summary}</p>
-                <div className="flex gap-2 mt-2">
-                  {f.tags?.map((t: string) => (
-                    <span key={t} className="text-xs bg-gray-800 text-gray-300 px-2 py-0.5 rounded">{t}</span>
-                  ))}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section>
-        <h2 className="text-lg font-semibold mb-3 text-gray-300">Recent Briefings</h2>
-        {briefings.length === 0 ? (
-          <p className="text-gray-500 text-sm">No briefings yet.</p>
-        ) : (
-          <ul className="space-y-3">
-            {briefings.map((b) => (
-              <li key={b.id} className="bg-gray-900 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
-                <span className="text-sm font-medium">{b.title}</span>
-                <span className={`text-xs px-2 py-0.5 rounded ${b.sent_to_slack ? "bg-green-900 text-green-300" : "bg-gray-800 text-gray-400"}`}>
-                  {b.sent_to_slack ? "Sent to Slack" : "Not sent"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </div>
   );
 }
