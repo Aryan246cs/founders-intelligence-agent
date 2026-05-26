@@ -149,6 +149,80 @@ class BriefingQueries:
         return res.data[0]
 
 
+class CompetitorSnapshotQueries:
+    """
+    Queries for competitor snapshot history stored in the competitor_snapshots table.
+    This is an additive table — existing tables are untouched.
+    """
+
+    @staticmethod
+    def save(
+        competitor_name: str, summary: str, key_points: List[str], tags: List[str]
+    ) -> dict:
+        """Persist a new snapshot row for a competitor."""
+        db = get_supabase()
+        res = (
+            db.table("competitor_snapshots")
+            .insert(
+                {
+                    "competitor_name": competitor_name.lower(),
+                    "summary": summary,
+                    "key_points": key_points,
+                    "tags": tags,
+                }
+            )
+            .execute()
+        )
+        return res.data[0]
+
+    @staticmethod
+    def get_previous(competitor_name: str, limit: int = 5) -> List[dict]:
+        """
+        Retrieve the N most recent snapshots for a competitor, excluding the latest one
+        (i.e. the ones before the current run).
+        """
+        db = get_supabase()
+        res = (
+            db.table("competitor_snapshots")
+            .select("*")
+            .eq("competitor_name", competitor_name.lower())
+            .order("captured_at", desc=True)
+            .limit(limit + 1)  # fetch one extra so we can skip the most recent
+            .execute()
+        )
+        rows = res.data or []
+        # Skip the very first row (most recent = current run just saved)
+        return rows[1:] if len(rows) > 1 else []
+
+    @staticmethod
+    def get_latest(competitor_name: str) -> Optional[dict]:
+        """Return the single most recent snapshot for a competitor."""
+        db = get_supabase()
+        res = (
+            db.table("competitor_snapshots")
+            .select("*")
+            .eq("competitor_name", competitor_name.lower())
+            .order("captured_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+
+    @staticmethod
+    def list_all_competitors() -> List[str]:
+        """Return distinct competitor names that have snapshots."""
+        db = get_supabase()
+        res = db.table("competitor_snapshots").select("competitor_name").execute()
+        seen: set = set()
+        names: List[str] = []
+        for row in res.data or []:
+            name = row["competitor_name"]
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+        return names
+
+
 class ExecutionLogQueries:
     @staticmethod
     def log(
