@@ -3,11 +3,17 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Bell, Zap, ChevronDown } from "lucide-react";
-import { mockActivityFeed } from "@/lib/mock-data";
+import { useActivityFeed } from "@/hooks/useDashboard";
+import { useAgents } from "@/hooks/useAgents";
 
 export function Topbar() {
   const [showNotifs, setShowNotifs] = useState(false);
-  const unread = 3;
+  const { events } = useActivityFeed(10_000);
+  const { agents } = useAgents(15_000);
+
+  const activeCount = agents.filter((a) => a.status === "active" || a.status === "running").length;
+  const hasRunning = agents.some((a) => a.status === "running");
+  const unread = Math.min(events.filter((e) => e.type === "warning" || e.type === "error").length, 9);
 
   return (
     <header className="fixed top-0 left-60 right-0 h-14 border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-xl z-30 flex items-center px-6 gap-4">
@@ -32,14 +38,18 @@ export function Topbar() {
             className="w-1.5 h-1.5 rounded-full bg-emerald-400"
             style={{ boxShadow: "0 0 6px rgba(52,211,153,0.8)" }}
           />
-          <span className="text-xs font-medium text-emerald-400">5 Agents Active</span>
+          <span className="text-xs font-medium text-emerald-400">
+            {activeCount > 0 ? `${activeCount} Agents Active` : "Agents Idle"}
+          </span>
         </div>
 
-        {/* Agent pulse */}
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/5 border border-brand-500/15">
-          <Zap className="w-3.5 h-3.5 text-brand-400" />
-          <span className="text-xs font-medium text-brand-400">Running</span>
-        </div>
+        {/* Agent pulse — only when something is running */}
+        {hasRunning && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/5 border border-brand-500/15">
+            <Zap className="w-3.5 h-3.5 text-brand-400" />
+            <span className="text-xs font-medium text-brand-400">Running</span>
+          </div>
+        )}
 
         {/* Notifications */}
         <div className="relative">
@@ -68,7 +78,7 @@ export function Topbar() {
                   <p className="text-sm font-semibold text-zinc-200">Recent Activity</p>
                 </div>
                 <div className="max-h-72 overflow-y-auto">
-                  {mockActivityFeed.slice(0, 6).map((event) => (
+                  {events.slice(0, 6).map((event) => (
                     <div key={event.id} className="px-4 py-3 border-b border-zinc-800/30 hover:bg-zinc-800/20 transition-colors">
                       <p className="text-xs text-zinc-300">{event.message}</p>
                       <p className="text-[10px] text-zinc-600 mt-1">{event.timestamp} · {event.agent}</p>

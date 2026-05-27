@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Zap, Play } from "lucide-react";
 import { KpiCard } from "@/components/dashboard/KpiCard";
@@ -8,14 +9,18 @@ import { AgentStatusGrid } from "@/components/dashboard/AgentStatusGrid";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { ArchitecturePanel } from "@/components/dashboard/ArchitecturePanel";
 import { RecentBriefingsPanel } from "@/components/dashboard/RecentBriefingsPanel";
-import {
-  mockAgents,
-  mockBriefings,
-  mockActivityFeed,
-  kpiData,
-} from "@/lib/mock-data";
+import { GenerateBriefingModal } from "@/components/dashboard/GenerateBriefingModal";
+import { useDashboardStats, useActivityFeed } from "@/hooks/useDashboard";
+import { useAgents } from "@/hooks/useAgents";
+import { useBriefings } from "@/hooks/useBriefings";
 
 export default function Dashboard() {
+  const [briefingModalOpen, setBriefingModalOpen] = useState(false);
+  const { kpis, chartData, loading: statsLoading } = useDashboardStats(30_000);
+  const { events } = useActivityFeed(10_000);
+  const { agents } = useAgents(15_000);
+  const { briefings, refetch: refetchBriefings } = useBriefings(5, 30_000);
+
   return (
     <div className="relative min-h-screen">
       {/* Grid background */}
@@ -55,7 +60,10 @@ export default function Dashboard() {
               <Zap className="w-4 h-4" />
               Run Workflow
             </button>
-            <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-500 text-sm font-semibold text-white hover:bg-brand-400 transition-all shadow-glow-sm">
+            <button
+              onClick={() => setBriefingModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-500 text-sm font-semibold text-white hover:bg-brand-400 transition-all shadow-glow-sm"
+            >
               <Play className="w-4 h-4" />
               Generate Briefing
             </button>
@@ -64,7 +72,7 @@ export default function Dashboard() {
 
         {/* KPI Grid */}
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
-          {kpiData.map((kpi, i) => (
+          {kpis.map((kpi, i) => (
             <KpiCard key={kpi.label} {...kpi} index={i} />
           ))}
         </div>
@@ -76,17 +84,28 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           {/* Left: Agents + Briefings */}
           <div className="xl:col-span-2 space-y-6">
-            <AgentStatusGrid agents={mockAgents} />
-            <RecentBriefingsPanel briefings={mockBriefings} />
+            <AgentStatusGrid agents={agents} />
+            <RecentBriefingsPanel briefings={briefings} />
           </div>
 
           {/* Right: Architecture + Activity */}
           <div className="space-y-6">
-            <ActivityFeed events={mockActivityFeed} />
+            <ActivityFeed events={events} />
             <ArchitecturePanel />
           </div>
         </div>
       </div>
+
+      {/* Generate Briefing Modal */}
+      <GenerateBriefingModal
+        open={briefingModalOpen}
+        onClose={() => setBriefingModalOpen(false)}
+        onComplete={() => {
+          setBriefingModalOpen(false);
+          // Refresh briefings after a short delay to let DB write complete
+          setTimeout(refetchBriefings, 2000);
+        }}
+      />
     </div>
   );
 }

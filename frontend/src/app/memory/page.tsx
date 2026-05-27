@@ -1,20 +1,22 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Brain, Zap, TrendingUp, Database } from "lucide-react";
+import { Brain, Zap, TrendingUp, Database, RefreshCw } from "lucide-react";
 import { MemoryDiffCard } from "@/components/memory/MemoryDiffCard";
 import { Badge } from "@/components/ui/badge";
-import { mockMemoryComparisons } from "@/lib/mock-data";
-
-const memoryStats = [
-  { label: "Total Snapshots", value: "2,104", icon: Database, color: "text-purple-400" },
-  { label: "Comparisons Run", value: "847", icon: Brain, color: "text-brand-400" },
-  { label: "Signals Detected", value: "63", icon: Zap, color: "text-amber-400" },
-  { label: "Competitors Tracked", value: "12", icon: TrendingUp, color: "text-emerald-400" },
-];
+import { useMemoryComparisons } from "@/hooks/useMemory";
 
 export default function MemoryPage() {
-  const withChanges = mockMemoryComparisons.filter((c) => c.hasChanges);
+  const { comparisons, stats, loading } = useMemoryComparisons(30_000);
+
+  const withChanges = comparisons.filter((c) => c.hasChanges);
+
+  const memoryStats = [
+    { label: "Total Snapshots", value: stats.totalSnapshots > 0 ? stats.totalSnapshots.toLocaleString() : "—", icon: Database, color: "text-purple-400" },
+    { label: "Comparisons Run", value: stats.comparisonsRun > 0 ? stats.comparisonsRun.toLocaleString() : "—", icon: Brain, color: "text-brand-400" },
+    { label: "Signals Detected", value: stats.signalsDetected > 0 ? stats.signalsDetected.toLocaleString() : "—", icon: Zap, color: "text-amber-400" },
+    { label: "Competitors Tracked", value: stats.competitorsTracked > 0 ? stats.competitorsTracked.toLocaleString() : "—", icon: TrendingUp, color: "text-emerald-400" },
+  ];
 
   return (
     <div className="relative min-h-screen">
@@ -25,14 +27,19 @@ export default function MemoryPage() {
 
       <div className="relative px-8 py-8 space-y-8">
         {/* Header */}
-        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-          <div className="flex items-center gap-2 mb-1">
-            <Brain className="w-5 h-5 text-purple-400" />
-            <h1 className="text-2xl font-bold text-zinc-100">Memory History</h1>
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <Brain className="w-5 h-5 text-purple-400" />
+              <h1 className="text-2xl font-bold text-zinc-100">Memory History</h1>
+            </div>
+            <p className="text-zinc-500 text-sm max-w-xl">
+              The AI remembers, compares, and detects meaningful changes over time. Only high-signal intelligence is surfaced.
+            </p>
           </div>
-          <p className="text-zinc-500 text-sm max-w-xl">
-            The AI remembers, compares, and detects meaningful changes over time. Only high-signal intelligence is surfaced.
-          </p>
+          {loading && (
+            <RefreshCw className="w-4 h-4 text-zinc-600 animate-spin" />
+          )}
         </motion.div>
 
         {/* Stats */}
@@ -82,11 +89,31 @@ export default function MemoryPage() {
             <Badge variant="warning">{withChanges.length} with changes</Badge>
           </div>
 
-          <div className="space-y-4">
-            {withChanges.map((comparison, i) => (
-              <MemoryDiffCard key={comparison.id} comparison={comparison} index={i} />
-            ))}
-          </div>
+          {/* Loading skeleton */}
+          {loading && comparisons.length === 0 && (
+            <div className="space-y-4">
+              {[1, 2].map((i) => (
+                <div key={i} className="glass rounded-xl border border-zinc-800/60 p-6 animate-pulse">
+                  <div className="h-4 bg-zinc-800 rounded w-1/3 mb-3" />
+                  <div className="h-3 bg-zinc-800/60 rounded w-2/3" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {withChanges.length === 0 && !loading ? (
+            <div className="glass rounded-xl border border-zinc-800/60 p-12 text-center">
+              <Brain className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
+              <p className="text-zinc-500 text-sm">No high-signal changes detected yet.</p>
+              <p className="text-zinc-600 text-xs mt-1">Run a workflow to start building memory history.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {withChanges.map((comparison, i) => (
+                <MemoryDiffCard key={comparison.id} comparison={comparison} index={i} />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -28,6 +28,7 @@ const statusItems = [
   { label: "Slack Connected", color: "status-dot-green", active: true },
   { label: "n8n Active", color: "status-dot-green", active: true },
   { label: "Supabase Synced", color: "status-dot-green", active: true },
+  { label: "Apify Connected", color: "status-dot-green", active: true },
 ];
 
 export function Sidebar() {

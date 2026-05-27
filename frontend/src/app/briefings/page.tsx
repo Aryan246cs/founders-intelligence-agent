@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Search, Filter, FileText } from "lucide-react";
+import { Search, Filter, FileText, RefreshCw } from "lucide-react";
 import { BriefingCard } from "@/components/briefings/BriefingCard";
 import { Badge } from "@/components/ui/badge";
-import { mockBriefings } from "@/lib/mock-data";
+import { useBriefings } from "@/hooks/useBriefings";
 import type { Priority } from "@/lib/types";
 
 const priorities: { label: string; value: Priority | "all" }[] = [
@@ -21,7 +21,9 @@ export default function BriefingsPage() {
   const [priority, setPriority] = useState<Priority | "all">("all");
   const [slackOnly, setSlackOnly] = useState(false);
 
-  const filtered = mockBriefings.filter((b) => {
+  const { briefings, loading, error, refetch } = useBriefings(20, 30_000);
+
+  const filtered = briefings.filter((b) => {
     if (search && !b.title.toLowerCase().includes(search.toLowerCase())) return false;
     if (priority !== "all" && b.priority !== priority) return false;
     if (slackOnly && !b.sentToSlack) return false;
@@ -49,9 +51,23 @@ export default function BriefingsPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={refetch}
+              className="w-8 h-8 rounded-lg bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center hover:bg-zinc-700/60 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-zinc-400 ${loading ? "animate-spin" : ""}`} />
+            </button>
             <Badge variant="info">{filtered.length} briefings</Badge>
           </div>
         </motion.div>
+
+        {/* Error banner */}
+        {error && (
+          <div className="rounded-lg bg-amber-500/5 border border-amber-500/20 px-4 py-3 text-xs text-amber-400">
+            Showing cached data — {error}
+          </div>
+        )}
 
         {/* Filters */}
         <motion.div
@@ -105,26 +121,40 @@ export default function BriefingsPage() {
           </button>
         </motion.div>
 
+        {/* Loading skeleton */}
+        {loading && briefings.length === 0 && (
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="glass rounded-xl border border-zinc-800/60 p-6 animate-pulse">
+                <div className="h-4 bg-zinc-800 rounded w-3/4 mb-3" />
+                <div className="h-3 bg-zinc-800/60 rounded w-1/2" />
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Briefing cards */}
-        <div className="space-y-4">
-          {filtered.length === 0 ? (
-            <div className="glass rounded-xl border border-zinc-800/60 p-12 text-center">
-              <FileText className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
-              <p className="text-zinc-500 text-sm">No briefings match your filters.</p>
-            </div>
-          ) : (
-            filtered.map((briefing, i) => (
-              <motion.div
-                key={briefing.id}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.06 }}
-              >
-                <BriefingCard briefing={briefing} />
-              </motion.div>
-            ))
-          )}
-        </div>
+        {!loading || briefings.length > 0 ? (
+          <div className="space-y-4">
+            {filtered.length === 0 ? (
+              <div className="glass rounded-xl border border-zinc-800/60 p-12 text-center">
+                <FileText className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
+                <p className="text-zinc-500 text-sm">No briefings match your filters.</p>
+              </div>
+            ) : (
+              filtered.map((briefing, i) => (
+                <motion.div
+                  key={briefing.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.06 }}
+                >
+                  <BriefingCard briefing={briefing} />
+                </motion.div>
+              ))
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );
