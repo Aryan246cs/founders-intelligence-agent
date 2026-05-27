@@ -14,7 +14,6 @@ import {
   FileText,
   Send,
   Zap,
-  Slack,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { executionsService } from "@/services/executions";
@@ -48,7 +47,6 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
   const [steps, setSteps] = useState<StepState[]>(
     WORKFLOW_STEPS.map((s) => ({ id: s.id, status: "pending" }))
   );
-  const [currentStepIdx, setCurrentStepIdx] = useState(-1);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [result, setResult] = useState<WorkflowExecution | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +61,6 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
     if (open) {
       setPhase("idle");
       setSteps(WORKFLOW_STEPS.map((s) => ({ id: s.id, status: "pending" })));
-      setCurrentStepIdx(-1);
       setElapsedMs(0);
       setResult(null);
       setError(null);
@@ -95,12 +92,10 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
         return { ...s, status: "pending" };
       })
     );
-    setCurrentStepIdx(Math.min(completedSteps, totalSteps - 1));
   };
 
   const handleGenerate = async () => {
     setPhase("running");
-    setCurrentStepIdx(0);
     setSteps((prev) =>
       prev.map((s, i) => ({ ...s, status: i === 0 ? "running" : "pending" }))
     );
@@ -113,8 +108,8 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
         trigger_source: "manual",
       });
 
-      const execId = (execution as Record<string, unknown>).execution_id as string
-        ?? (execution as Record<string, unknown>).id as string;
+      const execId = (execution as unknown as Record<string, unknown>).execution_id as string
+        ?? (execution as unknown as Record<string, unknown>).id as string;
 
       if (!execId) {
         throw new Error("No execution ID returned");
@@ -124,7 +119,7 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
       const final = await executionsService.poll(
         execId,
         (updated) => {
-          const raw = updated as Record<string, unknown>;
+          const raw = updated as unknown as Record<string, unknown>;
           const total = (raw.steps_total as number) || WORKFLOW_STEPS.length;
           const completed = (raw.steps_completed as number) || 0;
           simulateStepProgress(total, completed);
@@ -135,7 +130,6 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
 
       // Mark all steps done
       setSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
-      setCurrentStepIdx(WORKFLOW_STEPS.length - 1);
       setResult(final);
       setPhase("done");
       onComplete?.(final);
@@ -160,26 +154,26 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
     <AnimatePresence>
       {open && (
         <>
-          {/* Backdrop */}
+          {/* Backdrop — also acts as the centering container */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
             onClick={phase === "idle" || phase === "done" || phase === "failed" ? onClose : undefined}
-          />
-
-          {/* Modal */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ duration: 0.2 }}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-lg"
           >
-            <div className="glass rounded-2xl border border-zinc-800/60 shadow-glass overflow-hidden">
+            {/* Modal — stop click propagation so clicking inside doesn't close */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-lg flex flex-col glass rounded-2xl border border-zinc-800/60 shadow-glass"
+              style={{ maxHeight: "min(640px, calc(100vh - 32px))" }}
+            >
               {/* Header */}
-              <div className="px-6 py-5 border-b border-zinc-800/60 flex items-center justify-between">
+              <div className="px-6 py-4 border-b border-zinc-800/60 flex items-center justify-between flex-shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">
                     <Zap className="w-4 h-4 text-brand-400" />
@@ -199,8 +193,8 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
                 )}
               </div>
 
-              {/* Body */}
-              <div className="px-6 py-5 space-y-5">
+              {/* Body — scrollable */}
+              <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1 min-h-0">
                 {/* Elapsed timer */}
                 {phase === "running" && (
                   <div className="flex items-center justify-between">
@@ -232,63 +226,33 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
                     return (
                       <motion.div
                         key={step.id}
-                        initial={{ opacity: 0.4 }}
-                        animate={{
-                          opacity: isPending ? 0.35 : 1,
-                        }}
+                        animate={{ opacity: isPending ? 0.35 : 1 }}
                         className={cn(
-                          "flex items-center gap-3 rounded-lg px-4 py-3 border transition-all",
+                          "flex items-center gap-3 rounded-lg px-4 py-2.5 border transition-all",
                           isRunning && "bg-brand-500/5 border-brand-500/20",
                           isDone && "bg-emerald-500/5 border-emerald-500/15",
                           isFailed && "bg-rose-500/5 border-rose-500/20",
                           isPending && "bg-zinc-800/20 border-zinc-800/40"
                         )}
                       >
-                        {/* Status indicator */}
                         <div className="flex-shrink-0">
-                          {isRunning && (
-                            <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
-                          )}
-                          {isDone && (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                          )}
-                          {isFailed && (
-                            <XCircle className="w-4 h-4 text-rose-400" />
-                          )}
+                          {isRunning && <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />}
+                          {isDone && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                          {isFailed && <XCircle className="w-4 h-4 text-rose-400" />}
                           {isPending && (
                             <div className="w-4 h-4 rounded-full border border-zinc-700 flex items-center justify-center">
                               <div className="w-1.5 h-1.5 rounded-full bg-zinc-700" />
                             </div>
                           )}
                         </div>
-
-                        <Icon
-                          className={cn(
-                            "w-3.5 h-3.5 flex-shrink-0",
-                            isRunning ? step.color : isDone ? "text-emerald-400" : "text-zinc-600"
-                          )}
-                        />
-
-                        <span
-                          className={cn(
-                            "text-xs font-medium flex-1",
-                            isRunning ? "text-zinc-200" : isDone ? "text-zinc-300" : "text-zinc-600"
-                          )}
-                        >
+                        <Icon className={cn("w-3.5 h-3.5 flex-shrink-0", isRunning ? step.color : isDone ? "text-emerald-400" : "text-zinc-600")} />
+                        <span className={cn("text-xs font-medium flex-1", isRunning ? "text-zinc-200" : isDone ? "text-zinc-300" : "text-zinc-600")}>
                           {step.label}
                           {isRunning && (
-                            <motion.span
-                              animate={{ opacity: [0, 1, 0] }}
-                              transition={{ duration: 1.2, repeat: Infinity }}
-                            >
-                              …
-                            </motion.span>
+                            <motion.span animate={{ opacity: [0, 1, 0] }} transition={{ duration: 1.2, repeat: Infinity }}>…</motion.span>
                           )}
                         </span>
-
-                        {isDone && (
-                          <span className="text-[10px] text-emerald-500 font-medium">Done</span>
-                        )}
+                        {isDone && <span className="text-[10px] text-emerald-500 font-medium">Done</span>}
                       </motion.div>
                     );
                   })}
@@ -299,7 +263,7 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
                   <motion.div
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-4 py-4 space-y-2"
+                    className="rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-4 py-3 space-y-1.5"
                   >
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -308,11 +272,8 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
                     <p className="text-xs text-zinc-400">
                       Completed in {formatElapsed(elapsedMs)} · Intelligence briefing is now available.
                     </p>
-                    {(result as Record<string, unknown>).slack_delivered && (
-                      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-                        <Slack className="w-3.5 h-3.5 text-emerald-400" />
-                        Delivered to Slack
-                      </div>
+                    {result.slackDelivered && (
+                      <p className="text-xs text-zinc-400">✓ Delivered to Slack</p>
                     )}
                   </motion.div>
                 )}
@@ -354,15 +315,15 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
                           : "bg-zinc-800/30 text-zinc-500 border-zinc-700/30 hover:text-zinc-300"
                       )}
                     >
-                      <Slack className="w-3.5 h-3.5" />
+                      <Send className="w-3.5 h-3.5" />
                       {sendToSlack ? "Will deliver to Slack" : "Also deliver to Slack"}
                     </button>
                   </div>
                 )}
               </div>
 
-              {/* Footer */}
-              <div className="px-6 py-4 border-t border-zinc-800/60 flex items-center justify-end gap-3">
+              {/* Footer — always visible */}
+              <div className="px-6 py-4 border-t border-zinc-800/60 flex items-center justify-end gap-3 flex-shrink-0">
                 {phase === "idle" && (
                   <>
                     <button
@@ -395,7 +356,7 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
                   </button>
                 )}
               </div>
-            </div>
+            </motion.div>
           </motion.div>
         </>
       )}

@@ -1,20 +1,13 @@
 """
-Comparison engine for detecting meaningful changes between competitor findings.
+Comparison engine — detects MEANINGFUL strategic changes between competitor findings.
 
-Strategy:
-  1. Normalize and deduplicate text.
-  2. Keyword-group detection for known change categories.
-  3. Fuzzy similarity to filter out near-duplicate content.
-  4. Only invoke LLM summarization AFTER structured deltas are identified.
-
-Output schema:
-  {
-    "competitor": str,
-    "has_changes": bool,
-    "changes": [{"type": str, "summary": str}],
-    "delta_summary": str,
-    "historical_context": str,
-  }
+Design principles:
+  - Suppress low-signal entities (AI, chatbots, safety, transparency, etc.)
+  - Only surface high-signal strategic movements
+  - Require minimum text length and specificity before flagging a change
+  - Deduplicate aggressively (similarity threshold 0.72 — tighter than before)
+  - Categorize by strategic impact, not generic keywords
+  - Never emit "no significant changes" noise into briefings
 """
 
 from __future__ import annotations
@@ -29,126 +22,205 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Change category keyword groups
+# Entities that produce zero-value comparisons — always suppressed
 # ---------------------------------------------------------------------------
 
-CHANGE_CATEGORIES: Dict[str, List[str]] = {
+SUPPRESSED_ENTITIES = {
+    "ai",
+    "artificial intelligence",
+    "chatbot",
+    "chatbots",
+    "machine learning",
+    "deep learning",
+    "neural network",
+    "nlp",
+    "natural language processing",
+    "transparency",
+    "safety",
+    "responsible ai",
+    "ai safety",
+    "ethics",
+    "customer service",
+    "automation",
+    "productivity",
+    "efficiency",
+    "innovation",
+    "technology",
+    "software",
+    "platform",
+    "solution",
+    "digital transformation",
+    "cloud",
+    "data",
+    "analytics",
+}
+
+# ---------------------------------------------------------------------------
+# High-signal change categories — only these matter
+# ---------------------------------------------------------------------------
+
+HIGH_SIGNAL_CATEGORIES: Dict[str, List[str]] = {
+    "pricing_change": [
+        "pricing",
+        "price cut",
+        "price increase",
+        "per token",
+        "per seat",
+        "enterprise plan",
+        "free tier",
+        "api pricing",
+        "cost reduction",
+        "subscription",
+        "billing",
+        "rate limit",
+        "usage limit",
+    ],
+    "enterprise_expansion": [
+        "enterprise",
+        "soc 2",
+        "iso 27001",
+        "hipaa",
+        "gdpr compliance",
+        "on-premise",
+        "private cloud",
+        "dedicated instance",
+        "audit log",
+        "role-based access",
+        "sso",
+        "saml",
+        "governance",
+        "data residency",
+    ],
     "product_launch": [
-        "launch",
+        "launched",
         "released",
-        "introducing",
-        "new product",
-        "new feature",
+        "shipped",
         "now available",
         "general availability",
         "ga release",
-        "shipped",
-    ],
-    "pricing": [
-        "pricing",
-        "price",
-        "cost",
-        "subscription",
-        "tier",
-        "plan",
-        "free tier",
-        "enterprise plan",
-        "per seat",
-        "per token",
-        "api pricing",
+        "introducing",
+        "new product",
+        "new capability",
+        "new feature",
+        "beta launch",
+        "early access",
     ],
     "model_release": [
-        "model",
-        "gpt",
-        "claude",
-        "gemini",
-        "llm",
-        "foundation model",
-        "fine-tuned",
-        "checkpoint",
-        "weights",
+        "gpt-",
+        "claude ",
+        "gemini ",
+        "llama ",
+        "mistral ",
+        "codestral",
+        "new model",
+        "model release",
+        "context window",
         "benchmark",
-        "parameter",
+        "outperforms",
+        "state of the art",
+        "sota",
+        "multimodal",
     ],
-    "positioning": [
-        "positioning",
-        "messaging",
-        "rebrand",
-        "tagline",
-        "mission",
-        "vision",
-        "strategy",
-        "pivot",
-        "focus",
-        "narrative",
+    "infrastructure_move": [
+        "inference",
+        "latency",
+        "throughput",
+        "tokens per second",
+        "custom silicon",
+        "tpu",
+        "gpu cluster",
+        "dedicated hardware",
+        "edge deployment",
+        "on-device",
+        "inference optimization",
+        "distillation",
+        "quantization",
     ],
-    "partnership": [
-        "partner",
+    "partnership_deal": [
         "partnership",
-        "integration",
-        "collaboration",
-        "alliance",
-        "joint",
-        "ecosystem",
-        "marketplace",
-    ],
-    "acquisition": [
-        "acqui",
+        "signed deal",
+        "enterprise agreement",
+        "integration with",
         "acquired",
         "acquisition",
         "merger",
-        "bought",
-        "takeover",
-        "deal closed",
+        "joint venture",
+        "strategic alliance",
+        "distribution agreement",
+        "oem",
+        "reseller",
     ],
-    "funding": [
-        "funding",
+    "funding_event": [
         "raised",
-        "series",
-        "seed",
-        "round",
+        "series a",
+        "series b",
+        "series c",
+        "seed round",
         "valuation",
-        "investment",
-        "investor",
-        "venture",
         "ipo",
+        "spac",
+        "funding round",
+        "investment",
+        "venture capital",
+        "lead investor",
     ],
-    "enterprise": [
-        "enterprise",
-        "soc 2",
-        "compliance",
-        "sla",
-        "dedicated",
-        "on-premise",
-        "private cloud",
-        "audit",
-        "governance",
+    "developer_ecosystem": [
+        "open source",
+        "open-source",
+        "github",
+        "sdk release",
+        "api v",
+        "developer platform",
+        "plugin",
+        "marketplace",
+        "extension",
+        "developer adoption",
+        "community growth",
+        "npm downloads",
     ],
-    "api_change": [
-        "api",
-        "sdk",
-        "endpoint",
-        "rate limit",
-        "deprecat",
-        "v2",
-        "v3",
-        "breaking change",
-        "migration guide",
-        "changelog",
+    "competitive_positioning": [
+        "market share",
+        "displacing",
+        "replacing",
+        "competing with",
+        "alternative to",
+        "beats",
+        "surpasses",
+        "outperforms",
+        "positioning against",
+        "direct competitor",
+    ],
+    "go_to_market": [
+        "sales team",
+        "channel partner",
+        "reseller",
+        "distribution",
+        "enterprise sales",
+        "direct sales",
+        "self-serve",
+        "product-led",
+        "go-to-market",
+        "gtm",
+        "land and expand",
     ],
 }
 
-# Similarity threshold below which two texts are considered different enough to flag
-SIMILARITY_THRESHOLD = 0.85
+# Minimum character length for a finding to be worth comparing
+MIN_FINDING_LENGTH = 80
+
+# Similarity above this = duplicate, skip
+SIMILARITY_THRESHOLD = 0.72
+
+# A change must match at least one high-signal category to be included
+REQUIRE_HIGH_SIGNAL = True
 
 
 # ---------------------------------------------------------------------------
-# Text normalization helpers
+# Text normalization
 # ---------------------------------------------------------------------------
 
 
 def _normalize(text: str) -> str:
-    """Lowercase, strip accents, collapse whitespace."""
     text = unicodedata.normalize("NFKD", text)
     text = text.encode("ascii", "ignore").decode("ascii")
     text = text.lower()
@@ -157,17 +229,39 @@ def _normalize(text: str) -> str:
 
 
 def _similarity(a: str, b: str) -> float:
-    """Return a 0–1 similarity ratio between two strings."""
     return SequenceMatcher(None, a, b).ratio()
 
 
-def _is_duplicate(
-    text: str, seen: List[str], threshold: float = SIMILARITY_THRESHOLD
-) -> bool:
-    """Return True if text is too similar to any already-seen string."""
+def _is_duplicate(text: str, seen: List[str]) -> bool:
     norm = _normalize(text)
     for s in seen:
-        if _similarity(norm, s) >= threshold:
+        if _similarity(norm, s) >= SIMILARITY_THRESHOLD:
+            return True
+    return False
+
+
+def _is_suppressed_entity(competitor: str) -> bool:
+    """Return True if this competitor name is a generic/suppressed entity."""
+    return _normalize(competitor) in SUPPRESSED_ENTITIES
+
+
+def _is_low_signal_text(text: str) -> bool:
+    """Return True if the text is too short or too generic to be useful."""
+    if len(text.strip()) < MIN_FINDING_LENGTH:
+        return True
+    norm = _normalize(text)
+    # Generic filler phrases that add no intelligence value
+    filler_patterns = [
+        r"^(ai|chatbot|machine learning|nlp)\b.{0,60}$",
+        r"no significant change",
+        r"continues to focus on",
+        r"remains committed to",
+        r"ongoing efforts",
+        r"as previously noted",
+        r"similar to last",
+    ]
+    for pattern in filler_patterns:
+        if re.search(pattern, norm):
             return True
     return False
 
@@ -178,11 +272,9 @@ def _is_duplicate(
 
 
 def _detect_change_type(text: str) -> Optional[str]:
-    """
-    Return the first matching change category for a piece of text, or None.
-    """
+    """Return the highest-signal category for a piece of text, or None."""
     norm = _normalize(text)
-    for category, keywords in CHANGE_CATEGORIES.items():
+    for category, keywords in HIGH_SIGNAL_CATEGORIES.items():
         for kw in keywords:
             if kw in norm:
                 return category
@@ -190,22 +282,26 @@ def _detect_change_type(text: str) -> Optional[str]:
 
 
 def _extract_new_content(
-    current_texts: List[str], previous_texts: List[str]
+    current_texts: List[str],
+    previous_texts: List[str],
 ) -> List[str]:
     """
-    Return items from current_texts that are not near-duplicates of anything
-    in previous_texts.
+    Return items from current_texts that are:
+    1. Not near-duplicates of previous content
+    2. Not near-duplicates of each other
+    3. Long enough to be meaningful
+    4. Not generic filler
     """
-    prev_normalized = [_normalize(t) for t in previous_texts]
+    prev_normalized = [_normalize(t) for t in previous_texts if t.strip()]
     new_items: List[str] = []
     seen_new: List[str] = []
 
     for text in current_texts:
+        if not text or _is_low_signal_text(text):
+            continue
         norm = _normalize(text)
-        # Skip if it's a near-duplicate of previous content
         if _is_duplicate(norm, prev_normalized):
             continue
-        # Skip if it's a near-duplicate of another new item (dedup within batch)
         if _is_duplicate(norm, seen_new):
             continue
         new_items.append(text)
@@ -226,15 +322,20 @@ def compare_findings(
 ) -> Dict[str, Any]:
     """
     Compare current competitor findings against previous ones.
-
-    Args:
-        competitor: Competitor name (used only for labeling output).
-        current_findings: List of finding dicts with at least a 'summary' key.
-        previous_findings: List of previous finding dicts with at least a 'summary' key.
-
-    Returns:
-        Comparison result dict matching the standard output schema.
+    Only returns has_changes=True when genuinely high-signal changes exist.
     """
+    # Suppress generic/useless entities entirely
+    if _is_suppressed_entity(competitor):
+        logger.info("Suppressed generic entity", competitor=competitor)
+        return {
+            "competitor": competitor,
+            "has_changes": False,
+            "changes": [],
+            "delta_summary": "",
+            "historical_context": "",
+            "suppressed": True,
+        }
+
     logger.info(
         "Running comparison",
         competitor=competitor,
@@ -242,7 +343,6 @@ def compare_findings(
         previous_count=len(previous_findings),
     )
 
-    # Graceful fallback when no history exists
     if not previous_findings:
         logger.info(
             "No previous findings — skipping delta detection", competitor=competitor
@@ -251,11 +351,15 @@ def compare_findings(
             "competitor": competitor,
             "has_changes": False,
             "changes": [],
-            "delta_summary": "No previous historical data available.",
+            "delta_summary": "",
             "historical_context": "",
         }
 
-    current_texts = [f.get("summary", "") for f in current_findings if f.get("summary")]
+    current_texts = [
+        f.get("summary", "")
+        for f in current_findings
+        if f.get("summary") and not _is_low_signal_text(f.get("summary", ""))
+    ]
     previous_texts = [
         f.get("summary", "") for f in previous_findings if f.get("summary")
     ]
@@ -268,17 +372,39 @@ def compare_findings(
             "competitor": competitor,
             "has_changes": False,
             "changes": [],
-            "delta_summary": "No significant changes detected since the previous run.",
+            "delta_summary": "",
             "historical_context": _build_historical_context(previous_findings),
         }
 
-    # Categorize each new piece of content
+    # Only keep changes that match a high-signal category
     changes: List[Dict[str, str]] = []
     for text in new_content:
-        change_type = _detect_change_type(text) or "general"
-        changes.append({"type": change_type, "summary": text[:300]})
+        change_type = _detect_change_type(text)
+        if REQUIRE_HIGH_SIGNAL and change_type is None:
+            logger.info(
+                "Skipping low-signal change", competitor=competitor, text=text[:80]
+            )
+            continue
+        changes.append(
+            {
+                "type": change_type or "strategic_shift",
+                "summary": text[:400],
+            }
+        )
 
-    logger.info("Changes detected", competitor=competitor, count=len(changes))
+    if not changes:
+        logger.info("All changes were low-signal — suppressing", competitor=competitor)
+        return {
+            "competitor": competitor,
+            "has_changes": False,
+            "changes": [],
+            "delta_summary": "",
+            "historical_context": _build_historical_context(previous_findings),
+        }
+
+    logger.info(
+        "High-signal changes detected", competitor=competitor, count=len(changes)
+    )
 
     return {
         "competitor": competitor,
@@ -293,88 +419,65 @@ def compare_all_competitors(
     current_findings_by_competitor: Dict[str, List[Dict[str, Any]]],
     previous_findings_by_competitor: Dict[str, List[Dict[str, Any]]],
 ) -> List[Dict[str, Any]]:
-    """
-    Run comparison for every competitor in the current batch.
-
-    Args:
-        current_findings_by_competitor: {competitor_name: [finding, ...]}
-        previous_findings_by_competitor: {competitor_name: [finding, ...]}
-
-    Returns:
-        List of comparison result dicts, one per competitor.
-    """
     results = []
     for competitor, current in current_findings_by_competitor.items():
         previous = previous_findings_by_competitor.get(competitor, [])
         result = compare_findings(competitor, current, previous)
-        results.append(result)
+        # Only include non-suppressed results
+        if not result.get("suppressed"):
+            results.append(result)
     return results
 
 
+def has_any_high_signal_changes(comparison_results: List[Dict[str, Any]]) -> bool:
+    """Return True if at least one competitor has real strategic changes."""
+    return any(r.get("has_changes") for r in comparison_results)
+
+
 # ---------------------------------------------------------------------------
-# Formatting helpers (no LLM — pure string construction)
+# Formatting helpers
 # ---------------------------------------------------------------------------
 
 
 def _build_delta_summary(competitor: str, changes: List[Dict[str, str]]) -> str:
-    """Build a concise plain-text delta summary from detected changes."""
     if not changes:
-        return f"No significant changes detected for {competitor}."
-
-    lines = [f"{competitor} — {len(changes)} new development(s) detected:"]
+        return ""
+    lines = [f"{competitor} — {len(changes)} strategic development(s):"]
     for c in changes:
-        category_label = c["type"].replace("_", " ").title()
-        lines.append(f"  [{category_label}] {c['summary'][:200]}")
+        label = c["type"].replace("_", " ").title()
+        lines.append(f"  [{label}] {c['summary'][:200]}")
     return "\n".join(lines)
 
 
 def _build_historical_context(previous_findings: List[Dict[str, Any]]) -> str:
-    """Summarize previous findings into a short historical context string."""
     if not previous_findings:
         return ""
     snippets = [
-        f.get("summary", "")[:150] for f in previous_findings[:3] if f.get("summary")
+        f.get("summary", "")[:150]
+        for f in previous_findings[:3]
+        if f.get("summary") and len(f.get("summary", "")) > 40
     ]
     return " | ".join(snippets)
 
 
 def build_briefing_changes_section(comparison_results: List[Dict[str, Any]]) -> str:
     """
-    Format comparison results into a Markdown section for the founder briefing.
-
-    Args:
-        comparison_results: List of comparison result dicts from compare_findings().
-
-    Returns:
-        Markdown string for the "Changes Since Previous Run" section.
+    Format only high-signal comparison results into a Markdown section.
+    Completely omits competitors with no changes — no filler lines.
     """
-    if not comparison_results:
-        return (
-            "## Changes Since Previous Run\n\nNo previous historical data available.\n"
-        )
+    high_signal = [r for r in comparison_results if r.get("has_changes")]
 
-    lines = ["## Changes Since Previous Run\n"]
-    any_changes = False
+    if not high_signal:
+        return ""  # Return empty — caller decides whether to proceed
 
-    for result in comparison_results:
+    lines = ["## Strategic Intelligence Changes\n"]
+    for result in high_signal:
         competitor = result.get("competitor", "Unknown")
-        has_changes = result.get("has_changes", False)
         changes = result.get("changes", [])
-
-        if not has_changes:
-            lines.append(f"**{competitor}**: No significant changes since last run.\n")
-            continue
-
-        any_changes = True
-        lines.append(f"**{competitor}**:\n")
+        lines.append(f"**{competitor}**:")
         for change in changes:
-            category_label = change["type"].replace("_", " ").title()
-            lines.append(f"- [{category_label}] {change['summary'][:200]}")
+            label = change["type"].replace("_", " ").title()
+            lines.append(f"- [{label}] {change['summary'][:250]}")
         lines.append("")
-
-    if not any_changes:
-        lines.append(
-            "\n_No meaningful changes detected across monitored competitors._\n"
-        )
 
     return "\n".join(lines)
