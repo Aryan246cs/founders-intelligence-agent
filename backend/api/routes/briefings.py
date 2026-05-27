@@ -26,66 +26,110 @@ def _enrich_briefing(row: dict) -> dict:
     """
     md = row.get("raw_markdown", "") or ""
 
-    # Extract key changes from bullet points in the markdown
+    # Extract key changes — supports both "- " and "* " bullet styles
     key_changes: List[str] = []
     for line in md.splitlines():
         stripped = line.strip()
-        if stripped.startswith("- ") and len(stripped) > 10:
+        if stripped.startswith(("- ", "* ", "• ")) and len(stripped) > 10:
             key_changes.append(stripped[2:].strip())
-    key_changes = key_changes[:8]  # cap at 8
+    key_changes = [k for k in key_changes if len(k) > 15][:8]
 
-    # Extract strategic insight from ## Strategic Opportunities section
+    # Extract strategic insight — try multiple heading variants
     strategic_insight = ""
-    opp_match = re.search(
-        r"##\s*Strategic Opportunities\s*\n(.*?)(?=\n##|\Z)", md, re.DOTALL
-    )
-    if opp_match:
-        strategic_insight = opp_match.group(1).strip()[:600]
+    for heading in [
+        "Strategic Intelligence",
+        "Strategic Opportunities",
+        "Strategic Insight",
+    ]:
+        match = re.search(
+            rf"##\s*{re.escape(heading)}\s*\n(.*?)(?=\n##|\Z)", md, re.DOTALL
+        )
+        if match:
+            strategic_insight = match.group(1).strip()[:600]
+            break
 
-    # Extract opportunity signals from ## Recommended Actions
+    # Extract opportunity signals — try multiple heading variants
     opportunity_signals: List[str] = []
-    actions_match = re.search(
-        r"##\s*Recommended Actions\s*\n(.*?)(?=\n##|\Z)", md, re.DOTALL
-    )
-    if actions_match:
-        for line in actions_match.group(1).splitlines():
-            stripped = line.strip()
-            if stripped.startswith("- ") and len(stripped) > 5:
-                opportunity_signals.append(stripped[2:].strip())
+    for heading in [
+        "Founder Takeaway",
+        "Recommended Actions",
+        "Strategic Opportunities",
+    ]:
+        match = re.search(
+            rf"##\s*{re.escape(heading)}\s*\n(.*?)(?=\n##|\Z)", md, re.DOTALL
+        )
+        if match:
+            block = match.group(1)
+            for line in block.splitlines():
+                stripped = line.strip()
+                if stripped.startswith(("- ", "* ", "• ")) and len(stripped) > 5:
+                    opportunity_signals.append(stripped[2:].strip())
+                elif stripped and not stripped.startswith("#") and len(stripped) > 20:
+                    # Plain paragraph line (Founder Takeaway is often not bulleted)
+                    opportunity_signals.append(stripped)
+                    break
+            if opportunity_signals:
+                break
     opportunity_signals = opportunity_signals[:5]
 
-    # Extract companies mentioned (simple heuristic: capitalized words near known names)
+    # Extract companies mentioned — scan the full markdown for any capitalized names
     companies_mentioned: List[str] = []
-    known = [
+    # First check known global companies
+    known_global = [
         "OpenAI",
         "Anthropic",
         "Google",
         "DeepMind",
         "Mistral",
         "Cohere",
-        "Together AI",
-        "Cognition",
         "Microsoft",
         "Meta",
         "Amazon",
         "Apple",
         "Nvidia",
         "Hugging Face",
-        "Stability AI",
-        "Inflection",
+        "Groq",
+        "Together AI",
+        "Perplexity",
+        "Cursor",
         "xAI",
     ]
-    for company in known:
+    # Then extract from title (topic-specific companies)
+    title = row.get("title", "")
+    for company in known_global:
         if company.lower() in md.lower():
             companies_mentioned.append(company)
 
+    # Also extract capitalized words from Key Developments section as company names
+    kd_match = re.search(r"##\s*Key Developments\s*\n(.*?)(?=\n##|\Z)", md, re.DOTALL)
+    if kd_match:
+        kd_text = kd_match.group(1)
+        # Find "[CompanyName]:" patterns
+        bracket_names = re.findall(r"\[([A-Z][a-zA-Z\s]+)\]", kd_text)
+        # Find "CompanyName:" patterns at start of bullets
+        colon_names = re.findall(
+            r"[-*]\s+([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)?):", kd_text
+        )
+        for name in bracket_names + colon_names:
+            name = name.strip()
+            if name and name not in companies_mentioned and len(name) > 2:
+                companies_mentioned.append(name)
+
     # Derive priority from content signals
-    priority = "medium"
     md_lower = md.lower()
+    priority = "medium"
     if any(w in md_lower for w in ["critical", "urgent", "immediate", "breaking"]):
         priority = "critical"
     elif any(
-        w in md_lower for w in ["significant", "major", "important", "enterprise"]
+        w in md_lower
+        for w in [
+            "significant",
+            "major",
+            "important",
+            "enterprise",
+            "launched",
+            "raised",
+        ]
     ):
         priority = "high"
     elif any(w in md_lower for w in ["minor", "small", "incremental"]):
@@ -97,11 +141,13 @@ def _enrich_briefing(row: dict) -> dict:
         "strategicInsight": strategic_insight
         or "See full briefing for strategic analysis.",
         "opportunitySignals": opportunity_signals,
-        "companiesMentioned": companies_mentioned,
+        "companiesMentioned": list(
+            dict.fromkeys(companies_mentioned)
+        ),  # dedup, preserve order
         "priority": priority,
         "riskLevel": priority,
-        "sourceCount": len(key_changes) + len(companies_mentioned),
-        "aiConfidence": 88,  # static until we add confidence scoring
+        "sourceCount": max(len(key_changes), 1),
+        "aiConfidence": 88,
         "sentToSlack": row.get("sent_to_slack", False),
         "generatedAt": row.get("generated_at", ""),
     }

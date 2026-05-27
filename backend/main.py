@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from api.routes import agents, research, briefings, memory, workflows
-from api.routes import activity, agents_status, dashboard, memory_comparisons
+from api.routes import activity, dashboard, memory_comparisons
 from utils.logger import get_logger, configure_logging
 from config import settings
 
@@ -53,7 +53,6 @@ app.include_router(briefings.router, prefix="/api/briefings", tags=["briefings"]
 app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
 app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"])
 app.include_router(activity.router, prefix="/api/activity", tags=["activity"])
-app.include_router(agents_status.router, prefix="/api/agents", tags=["agents"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(memory_comparisons.router, prefix="/api/memory", tags=["memory"])
 
