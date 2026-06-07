@@ -101,3 +101,90 @@ export interface ActivityEvent {
   type: "info" | "success" | "warning" | "error";
   agent?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Startup Research
+// ---------------------------------------------------------------------------
+
+export interface ResearchCompetitor {
+  name: string;
+  website: string;
+  domain?: string;
+  description: string;
+  business_focus: string;
+  target_audience: string;
+  market_positioning: string;
+  key_features: string[];
+  pricing_model: string;
+  pricing_tiers: PricingTier[];
+  strengths: string[];
+  source_url: string;
+}
+
+export interface PricingTier {
+  tier: string;
+  price: string;
+  features: string[];
+}
+
+export interface FeatureComparisonRow {
+  feature: string;
+  your_idea: string;
+  [competitor: string]: string;
+}
+
+export interface PricingTableRow {
+  competitor: string;
+  model: string;
+  tiers: PricingTier[];
+}
+
+export interface SwotAnalysis {
+  strengths: string[];
+  weaknesses: string[];
+  opportunities: string[];
+  threats: string[];
+}
+
+export interface ResearchSource {
+  name: string;
+  url: string;
+  type: string;
+}
+
+export interface StartupResearchReport {
+  id: string;
+  startup_name?: string;
+  startup_idea: string;
+  industry: string;
+  keywords: string[];
+  icp: string;
+  business_model: string;
+  executive_summary: string;
+  competitors: ResearchCompetitor[];
+  feature_comparison: FeatureComparisonRow[];
+  pricing_analysis: PricingTableRow[];
+  positioning_analysis: string;
+  market_gaps: string[];
+  differentiation: string[];
+  swot: SwotAnalysis;
+  founder_recommendations: string[];
+  sources: ResearchSource[];
+  competitors_found: number;
+  sources_analyzed: number;
+  research_score: number;
+  sent_to_slack: boolean;
+  created_at: string;
+}
+
+export interface StartupResearchListItem {
+  id: string;
+  startup_name?: string;
+  startup_idea: string;
+  industry: string;
+  competitors_found: number;
+  sources_analyzed: number;
+  research_score: number;
+  sent_to_slack: boolean;
+  created_at: string;
+}

@@ -13,6 +13,7 @@ import {
   Database,
   Activity,
   ChevronRight,
+  Telescope,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,12 @@ const navItems = [
   { href: "/briefings", label: "Briefings", icon: FileText },
   { href: "/executions", label: "Executions", icon: Zap },
   { href: "/memory", label: "Memory History", icon: Brain },
+  {
+    href: "/startup-research",
+    label: "Startup Research",
+    icon: Telescope,
+    highlight: true,
+  },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -54,6 +61,7 @@ export function Sidebar() {
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = pathname === item.href;
+          const isHighlight = (item as { highlight?: boolean }).highlight;
           return (
             <Link key={item.href} href={item.href}>
               <motion.div
@@ -62,6 +70,8 @@ export function Sidebar() {
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group relative",
                   active
                     ? "bg-brand-500/10 text-brand-400 border border-brand-500/20"
+                    : isHighlight
+                    ? "text-purple-300 hover:text-purple-200 hover:bg-purple-500/10 border border-purple-500/20 bg-purple-500/5"
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
                 )}
               >
@@ -71,8 +81,22 @@ export function Sidebar() {
                     className="absolute inset-0 rounded-lg bg-brand-500/5"
                   />
                 )}
-                <Icon className={cn("w-4 h-4 flex-shrink-0", active ? "text-brand-400" : "text-zinc-500 group-hover:text-zinc-300")} />
-                <span className="relative">{item.label}</span>
+                <Icon
+                  className={cn(
+                    "w-4 h-4 flex-shrink-0",
+                    active
+                      ? "text-brand-400"
+                      : isHighlight
+                      ? "text-purple-400"
+                      : "text-zinc-500 group-hover:text-zinc-300"
+                  )}
+                />
+                <span className="relative flex-1">{item.label}</span>
+                {isHighlight && !active && (
+                  <span className="text-[9px] font-bold uppercase tracking-wide bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded-full border border-purple-500/30">
+                    New
+                  </span>
+                )}
                 {active && <ChevronRight className="w-3 h-3 ml-auto text-brand-400/60" />}
               </motion.div>
             </Link>

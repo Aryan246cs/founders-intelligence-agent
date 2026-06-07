@@ -67,13 +67,23 @@ async def get_activity_feed(limit: int = 20):
     """Return recent execution log entries as a unified activity feed."""
     try:
         db = get_supabase()
-        res = (
-            db.table("execution_logs")
-            .select("*")
-            .order("logged_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
+        # Try logged_at first; fall back to created_at if the column doesn't exist
+        try:
+            res = (
+                db.table("execution_logs")
+                .select("*")
+                .order("logged_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+        except Exception:
+            res = (
+                db.table("execution_logs")
+                .select("*")
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
         rows = res.data or []
 
         events = []
@@ -81,7 +91,7 @@ async def get_activity_feed(limit: int = 20):
             level = row.get("level", "info")
             message = row.get("message", "")
             agent_type = row.get("agent_type", "")
-            logged_at = row.get("logged_at", "")
+            logged_at = row.get("logged_at") or row.get("created_at", "")
 
             events.append(
                 {

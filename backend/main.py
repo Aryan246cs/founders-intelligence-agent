@@ -10,6 +10,7 @@ from slowapi.errors import RateLimitExceeded
 
 from api.routes import agents, research, briefings, memory, workflows
 from api.routes import activity, dashboard, memory_comparisons
+from api.routes import startup_research
 from utils.logger import get_logger, configure_logging
 from config import settings
 
@@ -55,6 +56,9 @@ app.include_router(workflows.router, prefix="/api/workflows", tags=["workflows"]
 app.include_router(activity.router, prefix="/api/activity", tags=["activity"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(memory_comparisons.router, prefix="/api/memory", tags=["memory"])
+app.include_router(
+    startup_research.router, prefix="/api/startup-research", tags=["startup-research"]
+)
 
 
 @app.get("/health", tags=["health"])

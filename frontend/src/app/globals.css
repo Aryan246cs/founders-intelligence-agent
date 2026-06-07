@@ -95,4 +95,12 @@
     @apply w-2 h-2 rounded-full bg-brand-400;
     box-shadow: 0 0 6px rgba(56, 189, 248, 0.6);
   }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }

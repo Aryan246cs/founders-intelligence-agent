@@ -331,6 +331,52 @@ class CompetitorSnapshotQueries:
         return names
 
 
+class StartupResearchQueries:
+    """Queries for startup research reports."""
+
+    @staticmethod
+    def save(report: dict) -> dict:
+        db = get_supabase()
+        res = db.table("startup_research_reports").insert(report).execute()
+        return res.data[0]
+
+    @staticmethod
+    def list_recent(limit: int = 20) -> List[dict]:
+        db = get_supabase()
+        res = (
+            db.table("startup_research_reports")
+            .select(
+                "id,startup_name,startup_idea,industry,competitors_found,sources_analyzed,research_score,created_at,sent_to_slack"
+            )
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+
+    @staticmethod
+    def get(report_id: str) -> Optional[dict]:
+        db = get_supabase()
+        res = (
+            db.table("startup_research_reports")
+            .select("*")
+            .eq("id", report_id)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+
+    @staticmethod
+    def mark_sent(report_id: str) -> dict:
+        db = get_supabase()
+        res = (
+            db.table("startup_research_reports")
+            .update({"sent_to_slack": True})
+            .eq("id", report_id)
+            .execute()
+        )
+        return res.data[0]
+
+
 class ExecutionLogQueries:
     @staticmethod
     def log(
@@ -349,6 +395,7 @@ class ExecutionLogQueries:
                     "level": level,
                     "message": message,
                     "metadata": metadata or {},
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             ).execute()
         except Exception as e:

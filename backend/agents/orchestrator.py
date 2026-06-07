@@ -8,6 +8,7 @@ from agents.research_agent import ResearchAgent
 from agents.briefing_agent import BriefingAgent
 from agents.memory_agent import MemoryAgent
 from agents.planner_agent import PlannerAgent
+from agents.startup_research_agent import StartupResearchAgent
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,6 +19,7 @@ AGENT_REGISTRY: Dict[str, Type[BaseAgent]] = {
     "briefing": BriefingAgent,
     "memory": MemoryAgent,
     "planner": PlannerAgent,
+    "startup_research": StartupResearchAgent,
 }
 
 
