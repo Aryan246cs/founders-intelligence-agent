@@ -54,7 +54,13 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
   const [request, setRequest] = useState("");
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const animTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
+  const workflowDoneRef = useRef(false);
+
+  // Realistic time each step spends "running" before auto-advancing (ms)
+  // These are visual estimates — actual backend may be faster or slower
+  const STEP_DURATIONS = [14000, 20000, 8000, 18000, 5000];
 
   // Reset when modal opens
   useEffect(() => {
@@ -65,6 +71,7 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
       setResult(null);
       setError(null);
       setRequest("");
+      workflowDoneRef.current = false;
     }
   }, [open]);
 
@@ -83,25 +90,53 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
     };
   }, [phase]);
 
-  // Simulate step progression while polling
-  const simulateStepProgress = (totalSteps: number, completedSteps: number) => {
-    setSteps((prev) =>
-      prev.map((s, i) => {
-        if (i < completedSteps) return { ...s, status: "done" };
-        if (i === completedSteps) return { ...s, status: "running" };
-        return { ...s, status: "pending" };
-      })
-    );
-  };
+  // Time-based step animation — advances independently of backend polling
+  const startStepAnimation = () => {
+    let currentStep = 0;
+    workflowDoneRef.current = false;
 
-  const handleGenerate = async () => {
-    setPhase("running");
+    // Mark first step running immediately
     setSteps((prev) =>
       prev.map((s, i) => ({ ...s, status: i === 0 ? "running" : "pending" }))
     );
 
+    const advance = () => {
+      if (workflowDoneRef.current) return; // backend already finished — stop
+
+      const nextStep = currentStep + 1;
+
+      if (nextStep < WORKFLOW_STEPS.length) {
+        // Mark current step done, next step running
+        setSteps((prev) =>
+          prev.map((s, i) => {
+            if (i < nextStep) return { ...s, status: "done" };
+            if (i === nextStep) return { ...s, status: "running" };
+            return s;
+          })
+        );
+        currentStep = nextStep;
+        // Schedule next advance after this step's duration
+        animTimerRef.current = setTimeout(advance, STEP_DURATIONS[nextStep] ?? 10000);
+      }
+      // If we've animated all steps, just hold the last one as "running"
+      // until the real backend result arrives
+    };
+
+    animTimerRef.current = setTimeout(advance, STEP_DURATIONS[0]);
+  };
+
+  const stopStepAnimation = () => {
+    workflowDoneRef.current = true;
+    if (animTimerRef.current) clearTimeout(animTimerRef.current);
+  };
+
+  const handleGenerate = async () => {
+    setPhase("running");
+
+    // Start the local time-based step animation immediately
+    startStepAnimation();
+
     try {
-      // Trigger the workflow
       const execution = await executionsService.run({
         request: request.trim() || "Monitor OpenAI, Anthropic, Google DeepMind and generate founder intelligence briefing",
         send_to_slack: sendToSlack,
@@ -115,26 +150,23 @@ export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
         throw new Error("No execution ID returned");
       }
 
-      // Poll for completion
+      // Poll for completion — no longer drives the animation
       const final = await executionsService.poll(
         execId,
-        (updated) => {
-          const raw = updated as unknown as Record<string, unknown>;
-          const total = (raw.steps_total as number) || WORKFLOW_STEPS.length;
-          const completed = (raw.steps_completed as number) || 0;
-          simulateStepProgress(total, completed);
-        },
+        () => {}, // animation is time-based, not poll-based
         2000,
         300_000
       );
 
-      // Mark all steps done
+      // Stop local animation and snap all steps to done
+      stopStepAnimation();
       setSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
       setResult(final);
       setPhase("done");
       onComplete?.(final);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Workflow failed";
+      stopStepAnimation();
       setError(msg);
       setPhase("failed");
       setSteps((prev) =>
