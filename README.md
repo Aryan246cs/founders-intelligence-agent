@@ -1,6 +1,6 @@
-# Founder Intelligence Agent
+# Autonomous Founder Research & Competitive Intelligence Platform
 
-An autonomous competitive intelligence platform for startup founders. Monitors competitor websites, stores persistent memory, detects high-signal strategic changes, and generates executive-grade briefings — delivered to Slack.
+An autonomous multi-agent platform for startup founders. Researches competitors, analyses markets, detects high-signal strategic changes, generates executive briefings, and delivers intelligence to Slack — all from a single prompt.
 
 ## Stack
 
@@ -10,27 +10,61 @@ An autonomous competitive intelligence platform for startup founders. Monitors c
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
 | Database | Supabase (PostgreSQL) |
 | LLM | Groq API (llama3-70b-8192) |
-| Scraping | Apify |
+| Scraping | Apify (Website Crawler + Google Search) |
 | Orchestration | n8n |
 | Notifications | Slack Webhooks |
 
-## How It Works
+---
 
-1. **Trigger** — user clicks "Generate Briefing" in the UI, or n8n fires a scheduled workflow
-2. **Plan** — PlannerAgent uses Groq to turn a natural-language request into an execution plan (e.g. monitor Zomato + Swiggy → generate briefing)
-3. **Monitor** — CompetitorMonitorAgent scrapes each competitor's website via Apify and extracts structured intelligence with Groq
-4. **Compare** — MemoryAgent compares new findings against historical snapshots, detecting only high-signal strategic changes (pricing, product launches, enterprise moves, partnerships, funding)
-5. **Brief** — BriefingAgent generates a concise, topic-scoped briefing using only findings from the current run — no cross-contamination from previous runs
-6. **Deliver** — Slack delivery sends a formatted executive summary (Key Developments, Strategic Intelligence, Founder Takeaway)
+## Features
+
+### Startup Research (Flagship)
+Enter a startup idea. The platform autonomously runs a 10-step research pipeline:
+
+1. Parses the idea — extracts industry, keywords, ICP, business model
+2. Builds India-first + global search queries
+3. Searches Google via Apify for real competitors
+4. Scrapes competitor homepages + pricing pages
+5. Falls back to snippet analysis if scraping is blocked
+6. Extracts pricing tiers, features, and positioning
+7. Generates a strategic report via Groq (with retry logic)
+8. Builds feature comparison matrix + pricing intelligence table
+9. Saves to database + memory for future comparisons
+10. Delivers a structured Slack summary (optional)
+
+**Report sections:** Executive Summary · Competitor Landscape · Feature Comparison · Pricing Analysis · Positioning Analysis · Market Gaps · Differentiation Opportunities · SWOT · Founder Recommendations · Verified Sources
+
+### Competitor Monitoring
+Scheduled or manual workflows that scrape competitor websites, detect high-signal strategic changes (pricing, product launches, partnerships, funding), and generate executive briefings.
+
+### Intelligence Briefings
+Concise, topic-scoped briefings generated from live research findings. Deduplicated against recent briefings (>75% similarity suppressed). Delivered to Slack in executive block format.
+
+### Memory System
+Every competitor snapshot is stored and diffed against previous runs. Only meaningful strategic changes surface — generic noise is filtered by the comparison engine.
+
+### Execution Tracking
+Every workflow run — briefing generation or startup research — appears in the Executions page with a step-by-step timeline and duration.
+
+---
+
+## How the Briefing Pipeline Works
+
+1. **Trigger** — user clicks "Generate Briefing", or n8n fires a scheduled workflow
+2. **Plan** — PlannerAgent turns a natural-language request into an execution plan
+3. **Monitor** — CompetitorMonitorAgent scrapes each competitor via Apify + Groq
+4. **Compare** — MemoryAgent diffs new findings against historical snapshots
+5. **Brief** — BriefingAgent generates a markdown briefing scoped to this run only
+6. **Deliver** — Slack delivery sends Key Developments, Strategic Intelligence, Founder Takeaway
 
 ### Signal Quality Rules
-
-The system suppresses low-value output:
-- Generic entities ("AI", "chatbots", "safety", "transparency") are never compared
-- Findings shorter than 80 characters are filtered out
+- Generic entities ("AI", "chatbots", "safety") are never compared
+- Findings shorter than 80 characters are filtered
 - Filler patterns ("no significant changes", "remains committed to") are suppressed
-- Briefings too similar to recent ones (>75% similarity) are deduplicated
-- The signal gate only blocks **scheduled/automated** runs — manual triggers always generate
+- Briefings >75% similar to recent ones are deduplicated
+- Signal gate only applies to automated runs — manual triggers always generate
+
+---
 
 ## Project Structure
 
@@ -38,93 +72,105 @@ The system suppresses low-value output:
 founders-agent/
 ├── backend/
 │   ├── agents/
-│   │   ├── base.py                  # Abstract agent with task tracking + logging
-│   │   ├── orchestrator.py          # Runs sequential agent step lists
-│   │   ├── planner_agent.py         # Turns natural language → execution plan
-│   │   ├── competitor_monitor.py    # Scrapes + analyzes competitor websites
-│   │   ├── research_agent.py        # Google search via Apify + Groq analysis
-│   │   ├── memory_agent.py          # Read/write/compare persistent memory
-│   │   └── briefing_agent.py        # Generates topic-scoped executive briefings
+│   │   ├── base.py                     # Abstract agent — task tracking + logging
+│   │   ├── orchestrator.py             # Runs sequential agent step lists
+│   │   ├── planner_agent.py            # Natural language → execution plan
+│   │   ├── competitor_monitor.py       # Scrapes + analyses competitor websites
+│   │   ├── research_agent.py           # Google search via Apify + Groq analysis
+│   │   ├── memory_agent.py             # Read/write/compare persistent memory
+│   │   ├── briefing_agent.py           # Generates topic-scoped executive briefings
+│   │   └── startup_research_agent.py   # Full 10-step startup research pipeline
 │   ├── api/routes/
-│   │   ├── agents.py                # POST /run, GET /status, GET /{task_id}
-│   │   ├── briefings.py             # POST /generate, GET /, GET /{id}
-│   │   ├── workflows.py             # POST /run, GET /executions, GET /status/{id}
-│   │   ├── memory.py                # POST /set, GET /{ns}/{key}, POST /list
-│   │   ├── memory_comparisons.py    # GET /comparisons, GET /stats
-│   │   ├── dashboard.py             # GET /stats (KPIs + chart data)
-│   │   ├── activity.py              # GET /feed (live execution log stream)
-│   │   └── research.py              # POST /search, POST /competitor, GET /findings
+│   │   ├── agents.py                   # POST /run, GET /status, GET /{task_id}
+│   │   ├── briefings.py                # POST /generate, GET /, GET /{id}
+│   │   ├── workflows.py                # POST /run, GET /executions, GET /status/{id}
+│   │   ├── memory.py                   # POST /set, GET /{ns}/{key}, POST /list
+│   │   ├── memory_comparisons.py       # GET /comparisons, GET /stats
+│   │   ├── dashboard.py                # GET /stats (KPIs + chart data)
+│   │   ├── activity.py                 # GET /feed (live execution log stream)
+│   │   ├── research.py                 # POST /search, POST /competitor, GET /findings
+│   │   └── startup_research.py         # POST /run, GET /, GET /{id}, POST /{id}/slack
 │   ├── services/
 │   │   ├── comparison/
-│   │   │   └── comparison_engine.py # High-signal change detection (no LLM)
+│   │   │   └── comparison_engine.py    # High-signal change detection (no LLM)
 │   │   ├── memory/
-│   │   │   └── retrieval.py         # Historical snapshot retrieval helpers
-│   │   ├── groq_service.py          # Async Groq completions with retry
-│   │   ├── apify_service.py         # Web scraping + Google search
-│   │   ├── slack_service.py         # Executive-format Slack block delivery
-│   │   └── n8n_service.py           # n8n webhook triggers
+│   │   │   └── retrieval.py            # Historical snapshot retrieval helpers
+│   │   ├── groq_service.py             # Async Groq completions with retry
+│   │   ├── apify_service.py            # Web scraping + Google search
+│   │   ├── slack_service.py            # Executive-format Slack block delivery
+│   │   └── n8n_service.py              # n8n webhook triggers
 │   ├── db/
-│   │   ├── client.py                # Supabase client singleton
-│   │   ├── queries.py               # All DB query classes
-│   │   └── migrations/              # SQL migration files (run in order)
-│   ├── models/                      # Pydantic request/response schemas
-│   ├── utils/                       # Structured logging (structlog)
-│   ├── config.py                    # Settings via pydantic-settings
-│   ├── main.py                      # FastAPI app + CORS + rate limiting
+│   │   ├── client.py                   # Supabase client singleton
+│   │   ├── queries.py                  # All DB query classes
+│   │   └── migrations/                 # SQL migration files (run in order)
+│   ├── models/                         # Pydantic request/response schemas
+│   ├── utils/                          # Structured logging (structlog)
+│   ├── config.py                       # Settings via pydantic-settings
+│   ├── main.py                         # FastAPI app + CORS + rate limiting
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── page.tsx             # Dashboard (KPIs, agents, activity feed)
-│   │   │   ├── briefings/           # Briefings list with search + filter
-│   │   │   ├── executions/          # Workflow execution history + chart
-│   │   │   ├── memory/              # Memory comparison diffs
+│   │   │   ├── page.tsx                # Dashboard (KPIs, agents, activity feed)
+│   │   │   ├── briefings/              # Briefings list with search + filter
+│   │   │   ├── executions/             # Workflow execution history + chart
+│   │   │   ├── memory/                 # Memory comparison diffs
+│   │   │   ├── startup-research/       # Startup Research page (flagship)
 │   │   │   └── settings/
 │   │   ├── components/
-│   │   │   ├── dashboard/           # KpiCard, AgentStatusGrid, ActivityFeed,
-│   │   │   │                        # GenerateBriefingModal, PipelineViz, etc.
-│   │   │   ├── briefings/           # BriefingCard (expandable)
-│   │   │   ├── executions/          # ExecutionCard with step timeline
-│   │   │   ├── memory/              # MemoryDiffCard (old vs new snapshot)
-│   │   │   └── layout/              # Sidebar, Topbar
+│   │   │   ├── dashboard/              # KpiCard, AgentStatusGrid, ActivityFeed,
+│   │   │   │                           # GenerateBriefingModal, PipelineViz, etc.
+│   │   │   ├── briefings/              # BriefingCard (expandable)
+│   │   │   ├── executions/             # ExecutionCard with step timeline
+│   │   │   ├── memory/                 # MemoryDiffCard (old vs new snapshot)
+│   │   │   ├── startup-research/       # ResearchLauncher, ResearchReport,
+│   │   │   │                           # ResearchHistory
+│   │   │   └── layout/                 # Sidebar, Topbar
 │   │   ├── hooks/
-│   │   │   ├── usePolling.ts        # Generic polling primitive
-│   │   │   ├── useDashboard.ts      # KPIs + activity feed with polling
-│   │   │   ├── useBriefings.ts      # Briefings list with polling
-│   │   │   ├── useExecutions.ts     # Execution history with polling
-│   │   │   ├── useAgents.ts         # Agent status with polling
-│   │   │   └── useMemory.ts         # Memory comparisons with polling
+│   │   │   ├── usePolling.ts
+│   │   │   ├── useDashboard.ts
+│   │   │   ├── useBriefings.ts
+│   │   │   ├── useExecutions.ts
+│   │   │   ├── useAgents.ts
+│   │   │   ├── useMemory.ts
+│   │   │   └── useStartupResearch.ts   # Research history with polling
 │   │   ├── services/
-│   │   │   ├── api.ts               # Base fetch client with retry
+│   │   │   ├── api.ts                  # Base fetch client with retry
 │   │   │   ├── briefings.ts
-│   │   │   ├── executions.ts        # Includes poll() for live execution tracking
+│   │   │   ├── executions.ts
 │   │   │   ├── agents.ts
 │   │   │   ├── memory.ts
-│   │   │   └── dashboard.ts
+│   │   │   ├── dashboard.ts
+│   │   │   └── startupResearch.ts      # Research API service
 │   │   └── lib/
-│   │       ├── types.ts             # Shared TypeScript interfaces
-│   │       ├── mock-data.ts         # Fallback data (shown when backend is down)
+│   │       ├── types.ts                # Shared TypeScript interfaces
+│   │       ├── mock-data.ts            # Fallback data (shown when backend is down)
 │   │       └── utils.ts
-│   ├── .env                         # NEXT_PUBLIC_API_URL=http://localhost:8000
+│   ├── .env                            # NEXT_PUBLIC_API_URL=http://localhost:8000
 │   └── package.json
 └── n8n/
-    ├── daily_briefing_workflow.json      # Runs every 24h → POST /api/briefings/generate
-    └── competitor_monitor_workflow.json  # Runs every 12h → POST /api/workflows/orchestrate
+    ├── daily_briefing_workflow.json         # Runs every 24h → POST /api/briefings/generate
+    └── competitor_monitor_workflow.json     # Runs every 12h → POST /api/workflows/orchestrate
 ```
+
+---
 
 ## Database Schema
 
 Run migrations in order from `backend/db/migrations/`:
 
-| Table | Purpose |
-|---|---|
-| `agent_tasks` | Every agent execution — status, input, result, error |
-| `research_findings` | Scraped + analyzed findings with tags and source URLs |
-| `briefings` | Generated briefings with raw markdown |
-| `memory_entries` | Key-value persistent memory (namespace + key) |
-| `competitor_snapshots` | Historical competitor snapshots for diff comparison |
-| `workflow_executions` | End-to-end workflow run records (for n8n polling) |
-| `execution_logs` | Structured agent logs (powers the live activity feed) |
+| Migration | Table | Purpose |
+|---|---|---|
+| `001_initial_schema.sql` | `agent_tasks` | Every agent execution — status, input, result, error |
+| `001_initial_schema.sql` | `research_findings` | Scraped + analysed findings with tags and source URLs |
+| `001_initial_schema.sql` | `briefings` | Generated briefings with raw markdown |
+| `001_initial_schema.sql` | `memory_entries` | Key-value persistent memory (namespace + key) |
+| `001_initial_schema.sql` | `execution_logs` | Structured agent logs (powers the live activity feed) |
+| `002_competitor_snapshots.sql` | `competitor_snapshots` | Historical competitor snapshots for diff comparison |
+| `003_workflow_executions.sql` | `workflow_executions` | End-to-end workflow run records |
+| `004_startup_research.sql` | `startup_research_reports` | Full startup research reports (all 10 sections as JSONB) |
+
+---
 
 ## Setup
 
@@ -140,10 +186,20 @@ Run migrations in order from `backend/db/migrations/`:
 
 ### 1. Database
 
-Run the three SQL files in `backend/db/migrations/` against your Supabase project via the SQL editor, in order:
-1. `001_initial_schema.sql`
-2. `002_competitor_snapshots.sql`
-3. `003_workflow_executions.sql`
+Run all four SQL files in `backend/db/migrations/` against your Supabase project via the SQL editor, in order:
+
+```
+001_initial_schema.sql
+002_competitor_snapshots.sql
+003_workflow_executions.sql
+004_startup_research.sql
+```
+
+If you get RLS errors on insert, run this in the SQL editor:
+
+```sql
+alter table startup_research_reports disable row level security;
+```
 
 ### 2. Backend
 
@@ -164,7 +220,6 @@ Backend runs at `http://localhost:8000`. Swagger UI at `http://localhost:8000/do
 ```bash
 cd frontend
 npm install
-# .env is already created with NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev
 ```
 
@@ -172,7 +227,9 @@ Frontend runs at `http://localhost:3000`.
 
 ### 4. n8n (optional)
 
-Import the JSONs from `n8n/` into your n8n instance. Update the webhook URLs in each workflow to point at your backend URL.
+Import the JSONs from `n8n/` into your n8n instance. Update the webhook URLs to point at your backend.
+
+---
 
 ## Environment Variables
 
@@ -203,23 +260,35 @@ RATE_LIMIT_PER_MINUTE=60
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
+---
+
 ## Key API Endpoints
 
 ```
-POST /api/workflows/run              Trigger a full autonomous workflow
-GET  /api/workflows/executions       List recent workflow runs
-GET  /api/workflows/status/{id}      Poll a running workflow
+# Startup Research (flagship)
+POST /api/startup-research/run          Launch full autonomous research pipeline
+GET  /api/startup-research/             List research history
+GET  /api/startup-research/{id}         Fetch a full report
+POST /api/startup-research/{id}/slack   Send a saved report to Slack
 
-GET  /api/briefings/                 List briefings (enriched for frontend)
-POST /api/briefings/generate         Queue a briefing generation
+# Briefing Workflows
+POST /api/workflows/run                 Trigger a full autonomous briefing workflow
+GET  /api/workflows/executions          List recent workflow runs
+GET  /api/workflows/status/{id}         Poll a running workflow
 
-GET  /api/agents/status              Live agent health from agent_tasks
-GET  /api/dashboard/stats            KPI aggregates + 7-day chart data
-GET  /api/activity/feed              Live execution log stream
+# Briefings
+GET  /api/briefings/                    List briefings (enriched for frontend)
+POST /api/briefings/generate            Queue a briefing generation
 
-GET  /api/memory/comparisons         Competitor snapshot diffs
-GET  /api/memory/stats               Memory system statistics
+# Platform
+GET  /api/agents/status                 Live agent health
+GET  /api/dashboard/stats               KPI aggregates + 7-day chart data
+GET  /api/activity/feed                 Live execution log stream
+GET  /api/memory/comparisons            Competitor snapshot diffs
+GET  /api/memory/stats                  Memory system statistics
 ```
+
+---
 
 ## Running Tests
 
