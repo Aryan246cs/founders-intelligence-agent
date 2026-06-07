@@ -336,8 +336,39 @@ class StartupResearchQueries:
 
     @staticmethod
     def save(report: dict) -> dict:
+        import json as _json
+
         db = get_supabase()
-        res = db.table("startup_research_reports").insert(report).execute()
+
+        # Ensure all JSONB fields are proper JSON-serialisable values.
+        # Supabase's Python client requires plain dicts/lists, not custom objects.
+        def _jsonify(v: Any) -> Any:
+            if v is None or isinstance(v, (str, int, float, bool)):
+                return v
+            # Re-encode via json round-trip to guarantee serializability
+            return _json.loads(_json.dumps(v, default=str))
+
+        clean: Dict[str, Any] = {}
+        jsonb_fields = {
+            "keywords",
+            "competitors",
+            "feature_comparison",
+            "pricing_analysis",
+            "market_gaps",
+            "differentiation",
+            "swot",
+            "founder_recommendations",
+            "sources",
+        }
+        for k, v in report.items():
+            clean[k] = _jsonify(v) if k in jsonb_fields else v
+
+        res = db.table("startup_research_reports").insert(clean).execute()
+        if not res.data:
+            raise RuntimeError(
+                f"Supabase insert returned no data. "
+                f"Check RLS policies on startup_research_reports. Response: {res}"
+            )
         return res.data[0]
 
     @staticmethod
@@ -374,7 +405,7 @@ class StartupResearchQueries:
             .eq("id", report_id)
             .execute()
         )
-        return res.data[0]
+        return res.data[0] if res.data else {"id": report_id, "sent_to_slack": True}
 
 
 class ExecutionLogQueries:
