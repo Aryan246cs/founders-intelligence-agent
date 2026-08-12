@@ -10,26 +10,32 @@ Endpoints
 POST /api/workflows/run            — autonomous plan → execute → briefing flow
 POST /api/workflows/manual-trigger — execute a caller-supplied step list
 GET  /api/workflows/status/{id}    — poll a workflow execution by ID
+GET  /api/workflows/jobs/{job_id}  — live step-by-step progress of a run
 GET  /api/workflows/executions     — list recent executions
 POST /api/workflows/trigger/{name} — fire an n8n webhook (unchanged)
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from agents.orchestrator import OrchestratorAgent
+from agents.orchestrator import OrchestratorAgent, describe_steps
 from agents.planner_agent import PlannerAgent
+from db.client import describe_db_error
 from db.queries import WorkflowExecutionQueries
+from services.job_tracker import ProgressReporter, registry
 from services.n8n_service import trigger_workflow
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
+
+_background_tasks: Set[asyncio.Task] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +47,9 @@ class RunRequest(BaseModel):
     request: str
     send_to_slack: bool = False
     trigger_source: str = "api"  # 'api' | 'n8n' | 'scheduler' | 'manual'
+    # Off by default so existing synchronous callers (n8n, scripts) are
+    # unaffected; the web UI opts in and polls the returned job_id.
+    background: bool = False
 
 
 class ManualTriggerRequest(BaseModel):
@@ -61,6 +70,10 @@ def _build_execution_response(record: dict) -> dict:
     All fields are always present so n8n expressions never hit KeyError.
     """
     return {
+        # `id` and `execution_id` carry the same value: `id` keeps the row
+        # identifiable to clients that treat this as a record (React list keys),
+        # `execution_id` is the name n8n expressions were written against.
+        "id": record["id"],
         "execution_id": record["id"],
         "status": record["status"],
         "trigger_source": record.get("trigger_source", "api"),
@@ -113,33 +126,18 @@ def _comparison_ran(results: List[dict]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/run")
-async def run_autonomous_flow(body: RunRequest):
-    """
-    Full autonomous end-to-end workflow.
-
-    1. PlannerAgent builds an execution plan from the natural-language request.
-    2. OrchestratorAgent runs each step sequentially.
-    3. Returns a stable execution envelope suitable for n8n polling.
-
-    Idempotent across repeated calls — each call creates a new execution record.
-    """
-    started_at = datetime.now(timezone.utc)
-    execution = WorkflowExecutionQueries.create(
-        trigger_source=body.trigger_source,
-        request_summary=body.request,
-    )
-    execution_id: str = execution["id"]
-
-    logger.info(
-        "Workflow run started",
-        execution_id=execution_id,
-        trigger_source=body.trigger_source,
-    )
-
+async def _run_flow(
+    body: RunRequest,
+    execution_id: str,
+    started_at: datetime,
+    reporter: ProgressReporter,
+) -> dict:
+    """Plan → execute → record. Shared by the blocking and background paths."""
+    reporter.begin()
     try:
         # Step 1: plan
-        planner = PlannerAgent()
+        reporter.start("plan", "Planning workflow")
+        planner = PlannerAgent(progress=reporter)
         plan = await planner.run({"request": body.request})
 
         steps: List[dict] = plan.get("steps", [])
@@ -151,8 +149,13 @@ async def run_autonomous_flow(body: RunRequest):
             if step.get("agent_type") == "briefing":
                 step["input"]["send_to_slack"] = body.send_to_slack
 
+        # The plan is only known now, so the job timeline grows to match it —
+        # the UI renders exactly the steps this run will actually perform.
+        reporter.done("plan", plan.get("plan_summary", "")[:120])
+        reporter.extend(describe_steps(steps))
+
         # Step 2: execute
-        orchestrator = OrchestratorAgent()
+        orchestrator = OrchestratorAgent(progress=reporter)
         execution_result = await orchestrator.run({"steps": steps})
 
         all_results: List[dict] = execution_result.get("results", [])
@@ -178,11 +181,14 @@ async def run_autonomous_flow(body: RunRequest):
             duration_ms=record.get("duration_ms"),
         )
 
-        return _build_execution_response(record)
+        response = _build_execution_response(record)
+        reporter.finish(response)
+        return response
 
     except Exception as exc:
         error_msg = str(exc)
         logger.error("Workflow run failed", execution_id=execution_id, error=error_msg)
+        reporter.fail(error_msg)
         record = WorkflowExecutionQueries.fail(
             execution_id=execution_id,
             error=error_msg,
@@ -195,6 +201,81 @@ async def run_autonomous_flow(body: RunRequest):
                 "message": error_msg,
             },
         )
+
+
+@router.post("/run")
+async def run_autonomous_flow(body: RunRequest):
+    """
+    Full autonomous end-to-end workflow.
+
+    1. PlannerAgent builds an execution plan from the natural-language request.
+    2. OrchestratorAgent runs each step sequentially.
+    3. Returns a stable execution envelope suitable for n8n polling.
+
+    With `background: true` the call returns immediately with a `job_id` whose
+    live step state can be polled at `/api/workflows/jobs/{job_id}`.
+
+    Idempotent across repeated calls — each call creates a new execution record.
+    """
+    started_at = datetime.now(timezone.utc)
+    try:
+        execution = WorkflowExecutionQueries.create(
+            trigger_source=body.trigger_source,
+            request_summary=body.request,
+        )
+    except Exception as exc:
+        logger.error("Could not create execution record", error=str(exc))
+        raise HTTPException(status_code=503, detail=describe_db_error(exc))
+    execution_id: str = execution["id"]
+
+    logger.info(
+        "Workflow run started",
+        execution_id=execution_id,
+        trigger_source=body.trigger_source,
+        background=body.background,
+    )
+
+    # The plan step is known up front; the rest is appended once the planner
+    # has decided what to run.
+    job = registry.create(
+        kind="briefing_workflow",
+        steps=[("plan", "Planning workflow")],
+        summary=body.request[:120],
+        execution_id=execution_id,
+    )
+    reporter = ProgressReporter(job)
+
+    if not body.background:
+        return await _run_flow(body, execution_id, started_at, reporter)
+
+    async def _background() -> None:
+        try:
+            await _run_flow(body, execution_id, started_at, reporter)
+        except Exception:
+            pass  # already recorded on the job and the execution row
+
+    task = asyncio.create_task(_background())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return {
+        "job_id": job.id,
+        "execution_id": execution_id,
+        "status": "running",
+        "poll_url": f"/api/workflows/jobs/{job.id}",
+    }
+
+
+@router.get("/jobs/{job_id}")
+async def get_workflow_job(job_id: str):
+    """Live progress for a workflow run — which agent is executing right now."""
+    job = registry.get(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No job {job_id}. Jobs are held in memory and are lost on restart.",
+        )
+    return job.to_dict()
 
 
 # ---------------------------------------------------------------------------

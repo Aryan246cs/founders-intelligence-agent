@@ -23,6 +23,36 @@ AGENT_REGISTRY: Dict[str, Type[BaseAgent]] = {
 }
 
 
+STEP_LABELS: Dict[str, str] = {
+    "competitor_monitor": "Analysing competitor",
+    "research": "Searching the web",
+    "briefing": "Generating intelligence briefing",
+    "memory": "Comparing against memory",
+    "planner": "Planning workflow",
+    "startup_research": "Running startup research",
+}
+
+
+def describe_steps(steps: List[dict]) -> List[tuple[str, str]]:
+    """
+    Turn a plan into (key, label) pairs for the job tracker.
+
+    Keys are positional because the same agent can legitimately appear several
+    times in one plan (one competitor_monitor step per competitor).
+    """
+    described = []
+    for i, step in enumerate(steps):
+        agent_type = step.get("agent_type", "unknown")
+        label = STEP_LABELS.get(agent_type, agent_type.replace("_", " ").title())
+        target = step.get("input", {}).get("competitor_name") or step.get(
+            "input", {}
+        ).get("query")
+        described.append(
+            (f"step_{i}", f"{label}: {target}" if target else label),
+        )
+    return described
+
+
 class OrchestratorAgent(BaseAgent):
     """Runs a sequence of agent tasks as a workflow."""
 
@@ -40,9 +70,13 @@ class OrchestratorAgent(BaseAgent):
             if not agent_cls:
                 raise ValueError(f"Unknown agent type: {agent_type}")
 
-            self._log("info", f"Step {i + 1}/{len(steps)}: running {agent_type}")
-            agent = agent_cls()
+            step_key = f"step_{i}"
+            self._step(step_key, f"Step {i + 1}/{len(steps)}: running {agent_type}")
+            # Child agents share the reporter so their own sub-steps (e.g. the
+            # research pipeline's ten stages) land on the same job timeline.
+            agent = agent_cls(progress=self.progress)
             result = await agent.run(step_input)
+            self.progress.done(step_key)
             results.append({"agent_type": agent_type, "result": result})
 
         return {"steps_completed": len(results), "results": results}

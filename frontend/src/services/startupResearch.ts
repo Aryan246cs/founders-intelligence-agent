@@ -10,7 +10,17 @@ export interface StartupResearchRunRequest {
   send_to_slack?: boolean;
 }
 
+/** Returned immediately by POST /run — the pipeline continues in the background. */
 export interface StartupResearchRunResponse {
+  job_id: string;
+  execution_id: string;
+  status: string;
+  steps_total: number;
+  poll_url: string;
+}
+
+/** The `result` payload attached to the job once it completes. */
+export interface StartupResearchResult {
   execution_id: string;
   report_id: string;
   status: string;

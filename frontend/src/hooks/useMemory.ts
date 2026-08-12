@@ -3,11 +3,10 @@
 import { useState, useCallback } from "react";
 import { usePolling } from "./usePolling";
 import { memoryService } from "@/services/memory";
-import { mockMemoryComparisons } from "@/lib/mock-data";
 import type { MemoryComparison } from "@/lib/types";
 
 export function useMemoryComparisons(pollMs = 30_000) {
-  const [comparisons, setComparisons] = useState<MemoryComparison[]>(mockMemoryComparisons);
+  const [comparisons, setComparisons] = useState<MemoryComparison[]>([]);
   const [stats, setStats] = useState({
     totalSnapshots: 0,
     comparisonsRun: 0,
@@ -15,6 +14,7 @@ export function useMemoryComparisons(pollMs = 30_000) {
     competitorsTracked: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetch = useCallback(async () => {
     try {
@@ -22,12 +22,11 @@ export function useMemoryComparisons(pollMs = 30_000) {
         memoryService.listComparisons(20, true),
         memoryService.getStats(),
       ]);
-      if (compData.comparisons.length > 0) {
-        setComparisons(compData.comparisons);
-      }
+      setComparisons(compData.comparisons);
       setStats(statsData);
-    } catch {
-      // Keep showing previous data
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load memory history");
     } finally {
       setLoading(false);
     }
@@ -35,5 +34,5 @@ export function useMemoryComparisons(pollMs = 30_000) {
 
   usePolling(fetch, pollMs);
 
-  return { comparisons, stats, loading };
+  return { comparisons, stats, loading, error };
 }

@@ -24,6 +24,15 @@ export function RecentBriefingsPanel({ briefings }: RecentBriefingsPanelProps) {
         </Link>
       </div>
 
+      {briefings.length === 0 && (
+        <div className="px-6 py-10 text-center">
+          <p className="text-sm text-zinc-500">No briefings generated yet</p>
+          <p className="text-xs text-zinc-600 mt-1">
+            Click Generate Briefing to run the workflow end to end.
+          </p>
+        </div>
+      )}
+
       <div className="divide-y divide-zinc-800/40">
         {briefings.slice(0, 3).map((briefing, i) => (
           <motion.div

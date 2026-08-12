@@ -4,14 +4,29 @@ import asyncio
 import json
 from typing import Optional
 
-from groq import Groq
+from groq import (
+    APIConnectionError,
+    APIStatusError,
+    AuthenticationError,
+    Groq,
+    RateLimitError,
+)
 from config import settings
 from utils.logger import get_logger
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 logger = get_logger(__name__)
 
 _client: Optional[Groq] = None
+
+
+class GroqUnavailable(RuntimeError):
+    """Raised when Groq cannot serve the request and retrying will not help."""
 
 
 def get_groq_client() -> Groq:
@@ -39,10 +54,33 @@ def _sync_complete(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    return response.choices[0].message.content
+    return response.choices[0].message.content or ""
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+# Only transient conditions are retried. A rejected API key or a decommissioned
+# model fails identically on every attempt, so retrying it just turns a clear
+# error into a slow, opaque one.
+_TRANSIENT = (RateLimitError, APIConnectionError, TimeoutError)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(_TRANSIENT),
+    reraise=True,
+)
+async def _complete_with_retry(
+    system_prompt: str,
+    user_prompt: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    return await asyncio.to_thread(
+        _sync_complete, system_prompt, user_prompt, model, temperature, max_tokens
+    )
+
+
 async def complete(
     system_prompt: str,
     user_prompt: str,
@@ -50,13 +88,35 @@ async def complete(
     temperature: float = 0.3,
     max_tokens: int = 2048,
 ) -> str:
-    """Async Groq completion with retry."""
+    """Async Groq completion. Retries transient failures, fails fast otherwise."""
     model = model or settings.groq_model
     logger.info("Groq completion request", model=model)
-    content = await asyncio.to_thread(
-        _sync_complete, system_prompt, user_prompt, model, temperature, max_tokens
-    )
-    logger.info("Groq completion received")
+    try:
+        content = await _complete_with_retry(
+            system_prompt, user_prompt, model, temperature, max_tokens
+        )
+    except AuthenticationError as e:
+        logger.error("Groq rejected the API key", error=str(e))
+        raise GroqUnavailable(
+            "Groq rejected the API key. Generate a new one at console.groq.com "
+            "and set GROQ_API_KEY in backend/.env."
+        ) from e
+    except APIStatusError as e:
+        # 404 on a model id means it was decommissioned — a very common cause of
+        # a pipeline that worked last month failing today.
+        if e.status_code == 404:
+            logger.error("Groq model not found", model=model)
+            raise GroqUnavailable(
+                f"Groq model '{model}' is unavailable. Update GROQ_MODEL in backend/.env "
+                "to a currently supported model."
+            ) from e
+        logger.error("Groq request failed", status=e.status_code, error=str(e))
+        raise GroqUnavailable(f"Groq returned {e.status_code}: {e}") from e
+    except RateLimitError as e:
+        logger.error("Groq rate limit exhausted after retries", error=str(e))
+        raise GroqUnavailable("Groq rate limit hit — retry in a minute.") from e
+
+    logger.info("Groq completion received", chars=len(content))
     return content
 
 

@@ -22,6 +22,9 @@ interface AgentStatusGridProps {
 }
 
 export function AgentStatusGrid({ agents }: AgentStatusGridProps) {
+  const healthy = agents.filter((a) => a.status !== "error").length;
+  const errored = agents.length - healthy;
+
   return (
     <div className="glass rounded-xl border border-zinc-800/60 overflow-hidden">
       <div className="px-6 py-4 border-b border-zinc-800/60 flex items-center justify-between">
@@ -29,8 +32,21 @@ export function AgentStatusGrid({ agents }: AgentStatusGridProps) {
           <h3 className="text-sm font-semibold text-zinc-200">Autonomous Agents</h3>
           <p className="text-xs text-zinc-500 mt-0.5">Real-time agent status and execution metrics</p>
         </div>
-        <Badge variant="success">5 Healthy</Badge>
+        {agents.length > 0 && (
+          <Badge variant={errored > 0 ? "error" : "success"}>
+            {errored > 0 ? `${errored} erroring` : `${healthy} healthy`}
+          </Badge>
+        )}
       </div>
+
+      {agents.length === 0 && (
+        <div className="px-6 py-10 text-center">
+          <p className="text-sm text-zinc-500">No agent status available</p>
+          <p className="text-xs text-zinc-600 mt-1">
+            Agent health is derived from the agent_tasks table — start the backend to load it.
+          </p>
+        </div>
+      )}
 
       <div className="divide-y divide-zinc-800/40">
         {agents.map((agent, i) => {

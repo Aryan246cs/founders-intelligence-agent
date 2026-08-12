@@ -4,12 +4,17 @@ __pycache__/
 *.egg-info/
 venv/
 .env
+.pytest_cache/
 
 # Node
 node_modules/
 .next/
 .env.local
+out/
 
 # Misc
 .DS_Store
 *.log
+
+# Build info
+tsconfig.tsbuildinfo

@@ -16,6 +16,7 @@ import {
   Telescope,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useHealth } from "@/hooks/useHealth";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -31,15 +32,10 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-const statusItems = [
-  { label: "Slack Connected", color: "status-dot-green", active: true },
-  { label: "n8n Active", color: "status-dot-green", active: true },
-  { label: "Supabase Synced", color: "status-dot-green", active: true },
-  { label: "Apify Connected", color: "status-dot-green", active: true },
-];
-
 export function Sidebar() {
   const pathname = usePathname();
+  // Real probe results, refreshed every minute — not a decorative row of dots.
+  const { health, loading: healthLoading } = useHealth(60_000);
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-60 flex flex-col border-r border-zinc-800/60 bg-zinc-950/80 backdrop-blur-xl z-40">
@@ -104,13 +100,47 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Status footer */}
+      {/* Status footer — live dependency health */}
       <div className="px-4 py-4 border-t border-zinc-800/60 space-y-2.5">
         <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider px-1">Integrations</p>
-        {statusItems.map((item) => (
-          <div key={item.label} className="flex items-center gap-2.5 px-1">
-            <span className={cn("flex-shrink-0", item.color)} style={{ width: 6, height: 6, borderRadius: "50%", display: "inline-block" }} />
-            <span className="text-xs text-zinc-400">{item.label}</span>
+        {healthLoading && !health && (
+          <p className="text-xs text-zinc-600 px-1">Checking…</p>
+        )}
+        {health?.services.map((service) => (
+          <div
+            key={service.name}
+            className="flex items-center gap-2.5 px-1"
+            title={service.detail}
+          >
+            <span
+              className={cn(
+                "flex-shrink-0",
+                service.ok
+                  ? "status-dot-green"
+                  : service.configured
+                  ? "status-dot-red"
+                  : "status-dot-amber"
+              )}
+              style={{ width: 6, height: 6, borderRadius: "50%", display: "inline-block" }}
+            />
+            <span
+              className={cn(
+                "text-xs truncate",
+                service.ok ? "text-zinc-400" : "text-zinc-500"
+              )}
+            >
+              {service.name}
+            </span>
+            {!service.ok && (
+              <span
+                className={cn(
+                  "text-[9px] ml-auto flex-shrink-0",
+                  service.configured ? "text-rose-400" : "text-amber-400/70"
+                )}
+              >
+                {service.configured ? "error" : "off"}
+              </span>
+            )}
           </div>
         ))}
         <div className="pt-2 border-t border-zinc-800/40">

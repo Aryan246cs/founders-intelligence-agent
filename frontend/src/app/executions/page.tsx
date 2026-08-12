@@ -69,8 +69,8 @@ export default function ExecutionsPage() {
 
         {/* Error banner */}
         {error && (
-          <div className="rounded-lg bg-amber-500/5 border border-amber-500/20 px-4 py-3 text-xs text-amber-400">
-            Showing cached data — {error}
+          <div className="rounded-lg bg-rose-500/5 border border-rose-500/20 px-4 py-3 text-xs text-rose-400">
+            Could not reach the backend — {error}
           </div>
         )}
 
@@ -142,13 +142,23 @@ export default function ExecutionsPage() {
             </div>
           )}
 
+          {!loading && executions.length === 0 && (
+            <div className="glass rounded-xl border border-zinc-800/60 p-12 text-center">
+              <Zap className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
+              <p className="text-zinc-500 text-sm">No workflow runs recorded yet.</p>
+              <p className="text-zinc-600 text-xs mt-1">
+                Generate a briefing or run startup research to create one.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-4">
             {executions.map((execution, i) => (
               <motion.div
                 key={execution.id}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 + i * 0.07 }}
+                transition={{ delay: Math.min(0.3 + i * 0.07, 1) }}
               >
                 <ExecutionCard execution={execution} />
               </motion.div>

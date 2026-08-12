@@ -35,6 +35,14 @@ export function ActivityFeed({ events }: ActivityFeedProps) {
       </div>
 
       <div className="divide-y divide-zinc-800/30 max-h-80 overflow-y-auto">
+        {events.length === 0 && (
+          <div className="px-5 py-10 text-center">
+            <p className="text-sm text-zinc-500">No activity yet</p>
+            <p className="text-xs text-zinc-600 mt-1">
+              Every agent step writes here as it runs.
+            </p>
+          </div>
+        )}
         <AnimatePresence>
           {events.map((event, i) => {
             const config = typeConfig[event.type];

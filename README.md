@@ -2,6 +2,19 @@
 
 An autonomous multi-agent platform for startup founders. Researches competitors, analyses markets, detects high-signal strategic changes, generates executive briefings, and delivers intelligence to Slack — all from a single prompt.
 
+> **Architecture deep-dive:** [ARCHITECTURE.md](ARCHITECTURE.md) — how the agents, pipelines and progress tracking work, and why each decision was made.
+
+## Quick start
+
+```bash
+make setup     # create the venv, install backend + frontend dependencies
+cp backend/.env.example backend/.env   # then add your Supabase, Groq and Apify keys
+make doctor    # verify every external service is reachable
+make dev       # backend on :8000, frontend on :3000
+```
+
+Run `make help` for all commands. Database migrations must be applied first — see [Setup](#setup).
+
 ## Stack
 
 | Layer | Technology |
@@ -46,6 +59,12 @@ Every competitor snapshot is stored and diffed against previous runs. Only meani
 ### Execution Tracking
 Every workflow run — briefing generation or startup research — appears in the Executions page with a step-by-step timeline and duration.
 
+### Live Progress
+Long pipelines run as background jobs. `POST /run` returns a `job_id` immediately and the UI polls real step state: each step lights up when the agent actually enters it, durations are measured server-side, and steps that did not apply (Slack when not requested, the snippet fallback when scraping succeeded) are reported as skipped. Callers that need blocking behaviour — n8n, cron, scripts — pass `?wait=true` (research) or `background: false` (workflows, the default).
+
+### Health & Preflight
+`GET /health/services` probes Supabase, Groq and Apify in parallel and reports each one's real state; the sidebar and Settings page render exactly that. `make doctor` runs the same checks from the terminal and exits non-zero if anything the pipeline needs is broken.
+
 ---
 
 ## How the Briefing Pipeline Works
@@ -83,22 +102,26 @@ founders-agent/
 │   ├── api/routes/
 │   │   ├── agents.py                   # POST /run, GET /status, GET /{task_id}
 │   │   ├── briefings.py                # POST /generate, GET /, GET /{id}
-│   │   ├── workflows.py                # POST /run, GET /executions, GET /status/{id}
+│   │   ├── workflows.py                # POST /run, GET /jobs/{id}, GET /executions
 │   │   ├── memory.py                   # POST /set, GET /{ns}/{key}, POST /list
 │   │   ├── memory_comparisons.py       # GET /comparisons, GET /stats
 │   │   ├── dashboard.py                # GET /stats (KPIs + chart data)
 │   │   ├── activity.py                 # GET /feed (live execution log stream)
 │   │   ├── research.py                 # POST /search, POST /competitor, GET /findings
-│   │   └── startup_research.py         # POST /run, GET /, GET /{id}, POST /{id}/slack
+│   │   ├── health.py                   # GET /health, GET /health/services
+│   │   └── startup_research.py         # POST /run, GET /jobs/{id}, GET /, GET /{id}
 │   ├── services/
 │   │   ├── comparison/
 │   │   │   └── comparison_engine.py    # High-signal change detection (no LLM)
 │   │   ├── memory/
 │   │   │   └── retrieval.py            # Historical snapshot retrieval helpers
-│   │   ├── groq_service.py             # Async Groq completions with retry
+│   │   ├── job_tracker.py              # In-process job registry — live step progress
+│   │   ├── groq_service.py             # Async Groq completions, transient-only retry
 │   │   ├── apify_service.py            # Web scraping + Google search
 │   │   ├── slack_service.py            # Executive-format Slack block delivery
 │   │   └── n8n_service.py              # n8n webhook triggers
+│   ├── scripts/
+│   │   └── doctor.py                   # Preflight check for every external service
 │   ├── db/
 │   │   ├── client.py                   # Supabase client singleton
 │   │   ├── queries.py                  # All DB query classes
@@ -127,7 +150,9 @@ founders-agent/
 │   │   │   │                           # ResearchHistory
 │   │   │   └── layout/                 # Sidebar, Topbar
 │   │   ├── hooks/
-│   │   │   ├── usePolling.ts
+│   │   │   ├── usePolling.ts           # Shared timer, pauses on hidden tabs
+│   │   │   ├── useJobProgress.ts       # Polls a run's real step state to completion
+│   │   │   ├── useHealth.ts            # Live dependency status
 │   │   │   ├── useDashboard.ts
 │   │   │   ├── useBriefings.ts
 │   │   │   ├── useExecutions.ts
@@ -135,7 +160,8 @@ founders-agent/
 │   │   │   ├── useMemory.ts
 │   │   │   └── useStartupResearch.ts   # Research history with polling
 │   │   ├── services/
-│   │   │   ├── api.ts                  # Base fetch client with retry
+│   │   │   ├── api.ts                  # Base fetch client — retry + error normalization
+│   │   │   ├── health.ts
 │   │   │   ├── briefings.ts
 │   │   │   ├── executions.ts
 │   │   │   ├── agents.ts
@@ -144,7 +170,6 @@ founders-agent/
 │   │   │   └── startupResearch.ts      # Research API service
 │   │   └── lib/
 │   │       ├── types.ts                # Shared TypeScript interfaces
-│   │       ├── mock-data.ts            # Fallback data (shown when backend is down)
 │   │       └── utils.ts
 │   ├── .env                            # NEXT_PUBLIC_API_URL=http://localhost:8000
 │   └── package.json
@@ -210,6 +235,7 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your keys
+python scripts/doctor.py        # confirm every service is reachable
 uvicorn main:app --reload
 ```
 
@@ -225,6 +251,8 @@ npm run dev
 
 Frontend runs at `http://localhost:3000`.
 
+> Both at once, from the repo root: `make dev`
+
 ### 4. n8n (optional)
 
 Import the JSONs from `n8n/` into your n8n instance. Update the webhook URLs to point at your backend.
@@ -239,18 +267,19 @@ Import the JSONs from `n8n/` into your n8n instance. Update the webhook URLs to 
 APP_ENV=development
 APP_SECRET_KEY=your-secret-key
 
+# Required
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-
 GROQ_API_KEY=your-groq-api-key
-GROQ_MODEL=llama3-70b-8192
-
+GROQ_MODEL=llama-3.3-70b-versatile
 APIFY_API_TOKEN=your-apify-token
 
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-
+# Optional — the app runs without these, degrading to "skip delivery"
+SLACK_WEBHOOK_URL=
 N8N_WEBHOOK_BASE_URL=http://localhost:5678/webhook
+
+CORS_ORIGINS=http://localhost:3000,http://localhost:3001
 RATE_LIMIT_PER_MINUTE=60
 ```
 
@@ -266,21 +295,25 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ```
 # Startup Research (flagship)
-POST /api/startup-research/run          Launch full autonomous research pipeline
+POST /api/startup-research/run          Launch the pipeline — 202 + job_id (add ?wait=true to block)
+GET  /api/startup-research/jobs/{id}    Live step-by-step progress of a run
 GET  /api/startup-research/             List research history
 GET  /api/startup-research/{id}         Fetch a full report
 POST /api/startup-research/{id}/slack   Send a saved report to Slack
 
 # Briefing Workflows
-POST /api/workflows/run                 Trigger a full autonomous briefing workflow
+POST /api/workflows/run                 Trigger a briefing workflow (background: true → job_id)
+GET  /api/workflows/jobs/{id}           Live step-by-step progress of a run
 GET  /api/workflows/executions          List recent workflow runs
-GET  /api/workflows/status/{id}         Poll a running workflow
+GET  /api/workflows/status/{id}         Poll a workflow execution record
 
 # Briefings
 GET  /api/briefings/                    List briefings (enriched for frontend)
 POST /api/briefings/generate            Queue a briefing generation
 
 # Platform
+GET  /health                            Liveness — no external calls
+GET  /health/services                   Readiness — probes Supabase, Groq, Apify, Slack, n8n
 GET  /api/agents/status                 Live agent health
 GET  /api/dashboard/stats               KPI aggregates + 7-day chart data
 GET  /api/activity/feed                 Live execution log stream
@@ -293,7 +326,27 @@ GET  /api/memory/stats                  Memory system statistics
 ## Running Tests
 
 ```bash
-cd backend
-source venv/bin/activate
-python -m pytest tests/ -v
+make test
+# or: cd backend && ./venv/bin/python -m pytest tests/ -v
 ```
+
+67 tests, no network calls. They cover the comparison engine's signal rules, the job
+tracker's step-state invariants, the background-run HTTP contract, the research pipeline
+with every external service faked, and the workflow response envelopes.
+
+## Troubleshooting
+
+```bash
+make doctor
+```
+
+Checks `.env`, then Supabase (DNS + auth + all 8 tables), Groq (key + model availability),
+Apify and Slack, printing the fix for anything broken.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `503` with "project is paused" | Supabase free-tier projects pause after inactivity and stop resolving in DNS | Resume the project at supabase.com/dashboard |
+| Pipeline fails with "Groq rejected the API key" | Key revoked or expired | New key at console.groq.com/keys → `GROQ_API_KEY` |
+| "Groq model is unavailable" | The configured model was decommissioned | Set `GROQ_MODEL` to a current model |
+| Insert returns no data | Row-level security on the target table | `alter table <name> disable row level security;` |
+| Sidebar dots red | The backend cannot reach that service | Hover a dot, or open Settings for the full detail |

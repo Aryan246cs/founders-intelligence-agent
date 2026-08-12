@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from agents.base import BaseAgent
 from services import apify_service, groq_service, slack_service
@@ -26,6 +26,22 @@ from db.queries import StartupResearchQueries, MemoryQueries
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# The pipeline's step contract. The API creates a job from this list before the
+# agent starts, so the UI can render the full timeline immediately and then
+# light each row up as the agent actually reaches it.
+RESEARCH_STEPS: List[Tuple[str, str]] = [
+    ("parse", "Understanding startup idea"),
+    ("strategy", "Building India-first search strategy"),
+    ("search", "Searching for competitors"),
+    ("scrape", "Analysing competitor websites"),
+    ("pricing", "Gathering pricing intelligence"),
+    ("recover", "Recovering competitors from search snippets"),
+    ("matrix", "Building feature & pricing matrices"),
+    ("insights", "Generating strategic insights"),
+    ("persist", "Saving report to database & memory"),
+    ("deliver", "Delivering summary to Slack"),
+]
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -339,6 +355,103 @@ def _page_text(pages: List[dict], max_chars_per_page: int = 2500) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+def _build_fallback_strategic(
+    startup_idea: str, industry: str, competitors: List[dict]
+) -> Dict[str, Any]:
+    """
+    Last-resort report body used only when every LLM attempt fails.
+
+    It is built purely from what the crawl actually observed — competitor names,
+    their stated positioning and whether they publish pricing. It never invents
+    market claims: a fabricated "gap" that happens to read well is worse than an
+    honest short report, because a founder could act on it.
+    """
+    named = [c.get("name", "").strip() for c in competitors if c.get("name")]
+    positionings = sorted(
+        {
+            c.get("market_positioning", "").strip()
+            for c in competitors
+            if c.get("market_positioning")
+        }
+    )
+    with_pricing = [c for c in competitors if c.get("pricing_tiers")]
+    no_pricing = [c for c in competitors if not c.get("pricing_tiers")]
+
+    competitor_line = (
+        f"Competitors identified: {', '.join(named[:5])}."
+        if named
+        else "No competitors could be verified from public sources in this run."
+    )
+
+    gaps: List[str] = []
+    if no_pricing:
+        gaps.append(
+            f"{len(no_pricing)} of {len(competitors)} competitors do not publish pricing "
+            f"({', '.join(c.get('name', '?') for c in no_pricing[:3])}) — transparent pricing is an "
+            "available wedge."
+        )
+    if len(positionings) == 1:
+        gaps.append(
+            f"Every competitor found positions as '{positionings[0]}' — adjacent segments appear unserved."
+        )
+    if len(competitors) < 3:
+        gaps.append(
+            f"Only {len(competitors)} verifiable competitor(s) surfaced for '{industry}' — either the "
+            "category is genuinely thin or incumbents are not discoverable via search, both of which "
+            "are worth validating manually."
+        )
+
+    recommendations: List[str] = []
+    if named:
+        recommendations.append(
+            f"Manually audit {named[0]}'s onboarding and pricing before building — it is the closest "
+            "verified comparison point found."
+        )
+    if with_pricing:
+        tiers = with_pricing[0].get("pricing_tiers", [])
+        recommendations.append(
+            f"Benchmark against {with_pricing[0].get('name', 'the priced competitor')}, the only "
+            f"competitor with public pricing ({len(tiers)} tier(s) found)."
+        )
+    recommendations.append(
+        "Re-run this research once the strategic analysis service is reachable — this report contains "
+        "verified competitor data but no AI-generated strategy."
+    )
+
+    return {
+        "executive_summary": (
+            f"{startup_idea} operates in {industry}. {competitor_line} "
+            "Strategic analysis could not be generated in this run, so the sections below report only "
+            "what was directly observed during the crawl."
+        ),
+        "positioning_analysis": (
+            f"{len(competitors)} competitor(s) were analysed in {industry}."
+            + (
+                f" Observed positioning: {', '.join(positionings)}."
+                if positionings
+                else ""
+            )
+            + " Interpretation of this landscape requires the strategic analysis step, which failed in "
+            "this run — treat the competitor and pricing tables as the reliable output here."
+        ),
+        "market_gaps": gaps
+        or ["Insufficient competitor data to identify gaps in this run."],
+        "differentiation_opportunities": [
+            "Not generated — the strategic analysis step was unavailable. The competitor, feature and "
+            "pricing tables above are complete and were captured from live sources."
+        ],
+        "swot": {
+            "strengths": [],
+            "weaknesses": [],
+            "opportunities": [],
+            "threats": (
+                [f"Direct competition from {n}" for n in named[:3]] if named else []
+            ),
+        },
+        "founder_recommendations": recommendations,
+    }
+
+
 def _is_valid_competitor(c: dict) -> bool:
     """Reject obviously bad entries."""
     if not c:
@@ -380,7 +493,7 @@ class StartupResearchAgent(BaseAgent):
         # ----------------------------------------------------------------
         # Step 1: Parse idea
         # ----------------------------------------------------------------
-        self._log("info", "Step 1: Understanding startup idea")
+        self._step("parse", "Step 1: Understanding startup idea")
         parsed_raw = await groq_service.complete(
             system_prompt=PARSE_IDEA_PROMPT,
             user_prompt=f"Startup idea: {startup_idea}\nStartup name: {startup_name or 'not provided'}",
@@ -393,13 +506,18 @@ class StartupResearchAgent(BaseAgent):
         icp = parsed.get("icp", "")
         business_model = parsed.get("business_model", "Marketplace")
 
-        self._log("info", f"Step 2: Industry='{industry}', keywords={keywords}")
+        self.progress.done("parse", f"Industry: {industry}")
+
+        self._step("strategy", f"Step 2: Industry='{industry}', keywords={keywords}")
+        india_qs, global_qs = _build_search_queries(startup_idea, parsed)
+        self.progress.done(
+            "strategy", f"{len(india_qs)} India queries, {len(global_qs)} global"
+        )
 
         # ----------------------------------------------------------------
         # Step 3: Search — India queries first, then global
         # ----------------------------------------------------------------
-        self._log("info", "Step 3: Searching for competitors (India-first)")
-        india_qs, global_qs = _build_search_queries(startup_idea, parsed)
+        self._step("search", "Step 3: Searching for competitors (India-first)")
 
         india_results: List[dict] = []
         for q in india_qs:
@@ -425,23 +543,30 @@ class StartupResearchAgent(BaseAgent):
         india_urls = _extract_urls(india_results, max_urls=8)
         global_urls = _extract_urls(global_results, max_urls=4)
 
-        # Merge, deduplicate by domain
+        # Merge, deduplicate by domain. India results keep their leading
+        # position so the scrape budget below is spent on them first.
+        india_count = len(india_urls)
+        candidate_urls = list(india_urls)
         seen_domains: set = {u["domain"] for u in india_urls}
         for u in global_urls:
             if u["domain"] not in seen_domains:
-                india_urls.append(u)
+                candidate_urls.append(u)
                 seen_domains.add(u["domain"])
 
-        candidate_urls = india_urls  # already ordered India-first
+        self.progress.done(
+            "search",
+            f"{len(candidate_urls)} candidate sites ({india_count} India-first)",
+        )
         self._log(
             "info",
-            f"Extracted {len(candidate_urls)} candidate URLs ({len([u for u in candidate_urls if u in india_urls[:8]])} India-first)",
+            f"Extracted {len(candidate_urls)} candidate URLs ({india_count} India-first)",
         )
 
         # ----------------------------------------------------------------
         # Step 4-5: Scrape and analyse competitor websites
         # ----------------------------------------------------------------
-        self._log("info", "Step 4: Scraping competitor websites")
+        self._step("scrape", "Step 4: Scraping competitor websites")
+        pricing_started = False
 
         for url_info in candidate_urls[:8]:
             url = url_info["url"]
@@ -476,6 +601,12 @@ class StartupResearchAgent(BaseAgent):
                 )
 
                 # Step 5: pricing enrichment
+                if not pricing_started:
+                    self.progress.done(
+                        "scrape", f"{len(competitors) + 1} competitors analysed"
+                    )
+                    self.progress.start("pricing", "Checking pricing pages")
+                    pricing_started = True
                 self._log("info", f"Step 5: Pricing check for {domain}")
                 if not comp.get("pricing_tiers"):
                     for pricing_path in ["/pricing", "/plans", "/price"]:
@@ -517,12 +648,21 @@ class StartupResearchAgent(BaseAgent):
                 self._log("warning", f"Failed to analyse {domain}: {e}")
                 continue
 
+        if pricing_started:
+            self.progress.done(
+                "pricing",
+                f"{sum(1 for c in competitors if c.get('pricing_tiers'))} with public pricing",
+            )
+        else:
+            self.progress.done("scrape", f"{len(competitors)} competitors analysed")
+            self.progress.skip("pricing", "No scraped sites to price-check")
+
         # ----------------------------------------------------------------
         # Step 4 fallback: analyse snippets if scraping got < 2 competitors
         # ----------------------------------------------------------------
         if len(competitors) < 2:
-            self._log(
-                "info",
+            self._step(
+                "recover",
                 f"Fallback: only {len(competitors)} scraped — analysing search snippets",
             )
             all_snippets = _extract_snippets(all_search_results)
@@ -581,14 +721,17 @@ class StartupResearchAgent(BaseAgent):
                             }
                         )
 
-        self._log(
-            "info",
-            f"Step 6: {len(competitors)} competitors identified, {len(sources)} sources",
-        )
+            self.progress.done("recover", f"{len(competitors)} competitors total")
+        else:
+            self.progress.skip("recover", "Not needed — scraping succeeded")
 
         # ----------------------------------------------------------------
         # Step 6: Feature matrix + pricing table
         # ----------------------------------------------------------------
+        self._step(
+            "matrix",
+            f"Step 6: {len(competitors)} competitors identified, {len(sources)} sources",
+        )
         all_features: set = set()
         for comp in competitors:
             for f in comp.get("key_features", []):
@@ -616,10 +759,12 @@ class StartupResearchAgent(BaseAgent):
             for comp in competitors
         ]
 
+        self.progress.done("matrix", f"{len(feature_comparison)} features compared")
+
         # ----------------------------------------------------------------
         # Step 7: Strategic report — with explicit retry
         # ----------------------------------------------------------------
-        self._log("info", "Step 7: Generating strategic insights")
+        self._step("insights", "Step 7: Generating strategic insights")
 
         competitor_ctx = json.dumps(
             [
@@ -687,51 +832,20 @@ class StartupResearchAgent(BaseAgent):
 
         if not strategic:
             self._log("error", "All strategic report attempts failed — using fallback")
-            # Build a minimal fallback so the report still has content
-            comp_names = [c.get("name", "") for c in competitors if c.get("name")]
-            strategic = {
-                "executive_summary": (
-                    f"{startup_idea} is entering the {industry} space in India. "
-                    f"{'Competitors identified include: ' + ', '.join(comp_names[:4]) + '.' if comp_names else 'Limited competitor data was available.'}"
-                ),
-                "positioning_analysis": (
-                    f"The {industry} market in India is {'fragmented with players including ' + ', '.join(comp_names[:3]) if comp_names else 'nascent with limited established players'}. "
-                    "Further manual research is recommended to validate positioning."
-                ),
-                "market_gaps": [
-                    f"Hyperlocal neighbourhood-level focus is underserved — most players operate at city scale",
-                    f"No verified player offers fashion-specific quick commerce for independent stores in India",
-                ],
-                "differentiation_opportunities": [
-                    "Be the first to offer a neighbourhood-store-first fashion delivery network in India",
-                    "Build a store onboarding flow optimised for non-tech-savvy kirana/fashion store owners",
-                ],
-                "swot": {
-                    "strengths": [
-                        "First-mover in hyperlocal fashion delivery for independent stores"
-                    ],
-                    "weaknesses": [
-                        "Requires physical logistics network investment to launch"
-                    ],
-                    "opportunities": [
-                        "Massive unorganised fashion retail in Indian tier 2/3 cities"
-                    ],
-                    "threats": [
-                        f"{comp_names[0]} could pivot to hyperlocal"
-                        if comp_names
-                        else "Large platforms entering hyperlocal"
-                    ],
-                },
-                "founder_recommendations": [
-                    "Start with one neighbourhood in one city, prove unit economics, then expand",
-                    "Partner with 10-15 anchor fashion stores before building the consumer-side app",
-                ],
-            }
+            strategic = _build_fallback_strategic(
+                startup_idea=startup_idea,
+                industry=industry,
+                competitors=competitors,
+            )
+            self.progress.detail(
+                "insights", "LLM unavailable — reported observed data only"
+            )
+        self.progress.done("insights", "Strategic analysis generated")
 
         # ----------------------------------------------------------------
         # Step 8: Assemble report
         # ----------------------------------------------------------------
-        self._log("info", "Step 8: Building founder report")
+        self._step("persist", "Step 8: Building founder report")
 
         research_score = min(
             100,
@@ -795,20 +909,28 @@ class StartupResearchAgent(BaseAgent):
         except Exception as e:
             self._log("warning", f"Memory save failed (non-fatal): {e}")
 
+        self.progress.done("persist", f"Report {report_id} saved")
+
         # ----------------------------------------------------------------
         # Step 10: Slack
         # ----------------------------------------------------------------
         slack_sent = False
         if send_to_slack:
-            self._log("info", "Step 10: Sending to Slack")
+            self._step("deliver", "Step 10: Sending to Slack")
             try:
                 slack_sent = await _send_research_to_slack(
                     startup_idea, report, report_id
                 )
                 if slack_sent:
                     StartupResearchQueries.mark_sent(report_id)
+                    self.progress.done("deliver", "Summary delivered to Slack")
+                else:
+                    self.progress.skip("deliver", "Slack webhook not configured")
             except Exception as e:
                 self._log("warning", f"Slack send failed (non-fatal): {e}")
+                self.progress.fail_step("deliver", str(e)[:120])
+        else:
+            self.progress.skip("deliver", "Slack delivery not requested")
 
         self._log(
             "info",

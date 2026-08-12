@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Telescope,
   Play,
@@ -17,30 +17,36 @@ import {
   Brain,
   Star,
   Send,
+  MinusCircle,
+  Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { startupResearchService } from "@/services/startupResearch";
-import type { StartupResearchReport } from "@/lib/types";
+import type { StartupResearchResult } from "@/services/startupResearch";
+import { useJobProgress } from "@/hooks/useJobProgress";
+import type { JobStep, StartupResearchReport } from "@/lib/types";
 
 interface Props {
   onReportReady: (report: StartupResearchReport) => void;
 }
 
-const RESEARCH_STEPS = [
-  { id: "parse", label: "Understanding startup idea", icon: Lightbulb, color: "text-amber-400" },
-  { id: "keywords", label: "Identifying industry & keywords", icon: Tag, color: "text-brand-400" },
-  { id: "search", label: "Searching for competitors", icon: Search, color: "text-purple-400" },
-  { id: "scrape", label: "Analyzing competitor websites", icon: Globe, color: "text-emerald-400" },
-  { id: "pricing", label: "Gathering pricing intelligence", icon: BarChart2, color: "text-rose-400" },
-  { id: "positioning", label: "Extracting positioning signals", icon: FileText, color: "text-cyan-400" },
-  { id: "insights", label: "Generating strategic insights", icon: Star, color: "text-amber-400" },
-  { id: "report", label: "Building founder report", icon: Brain, color: "text-purple-400" },
-  { id: "memory", label: "Saving to memory", icon: Brain, color: "text-brand-400" },
-  { id: "complete", label: "Report complete", icon: CheckCircle2, color: "text-emerald-400" },
-];
-
-// Realistic timing (ms) each step holds before auto-advancing
-const STEP_DURATIONS = [6000, 4000, 8000, 25000, 20000, 8000, 10000, 6000, 4000, 2000];
+/**
+ * Icons keyed by the step keys the backend emits (see RESEARCH_STEPS in
+ * backend/agents/startup_research_agent.py). The labels themselves come from
+ * the backend, so the two can never disagree about what is running.
+ */
+const STEP_ICONS: Record<string, React.ElementType> = {
+  parse: Lightbulb,
+  strategy: Tag,
+  search: Search,
+  scrape: Globe,
+  pricing: BarChart2,
+  recover: FileText,
+  matrix: Brain,
+  insights: Star,
+  persist: Database,
+  deliver: Send,
+};
 
 const EXAMPLE_IDEAS = [
   "AI-powered interview preparation platform",
@@ -51,130 +57,104 @@ const EXAMPLE_IDEAS = [
 ];
 
 type Phase = "idle" | "running" | "done" | "failed";
-type StepStatus = "pending" | "running" | "done" | "failed";
-
-interface StepState {
-  id: string;
-  status: StepStatus;
-}
 
 export function ResearchLauncher({ onReportReady }: Props) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [startupIdea, setStartupIdea] = useState("");
   const [startupName, setStartupName] = useState("");
   const [sendToSlack, setSendToSlack] = useState(false);
-  const [steps, setSteps] = useState<StepState[]>(
-    RESEARCH_STEPS.map((s) => ({ id: s.id, status: "pending" }))
-  );
+  const [pollPath, setPollPath] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [resultMeta, setResultMeta] = useState<{
-    competitorsFound: number;
-    sourcesAnalyzed: number;
-    researchScore: number;
-  } | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimeRef = useRef<number>(0);
-  const workflowDoneRef = useRef(false);
+  const deliveredRef = useRef<string | null>(null);
 
-  // Elapsed timer
+  const { progress, error: pollError, reset } = useJobProgress(pollPath);
+
+  // Elapsed timer — cosmetic only; the authoritative duration comes from the job.
   useEffect(() => {
     if (phase === "running") {
       startTimeRef.current = Date.now();
-      timerRef.current = setInterval(() => {
-        setElapsedMs(Date.now() - startTimeRef.current);
-      }, 100);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(
+        () => setElapsedMs(Date.now() - startTimeRef.current),
+        100
+      );
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
     }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [phase]);
 
-  const startStepAnimation = () => {
-    let currentStep = 0;
-    workflowDoneRef.current = false;
-    setSteps((prev) =>
-      prev.map((s, i) => ({ ...s, status: i === 0 ? "running" : "pending" }))
-    );
+  // React to terminal job states.
+  useEffect(() => {
+    if (!progress) return;
 
-    const advance = () => {
-      if (workflowDoneRef.current) return;
-      const nextStep = currentStep + 1;
-      if (nextStep < RESEARCH_STEPS.length) {
-        setSteps((prev) =>
-          prev.map((s, i) => {
-            if (i < nextStep) return { ...s, status: "done" };
-            if (i === nextStep) return { ...s, status: "running" };
-            return s;
-          })
-        );
-        currentStep = nextStep;
-        animTimerRef.current = setTimeout(advance, STEP_DURATIONS[nextStep] ?? 8000);
+    if (progress.status === "failed") {
+      setError(progress.error ?? "Research pipeline failed");
+      setPhase("failed");
+      setPollPath(null);
+      return;
+    }
+
+    if (progress.status === "completed") {
+      const result = progress.result as unknown as StartupResearchResult | null;
+      setPhase("done");
+      setPollPath(null);
+      // The job can report completed on more than one render; only fetch once.
+      if (result?.report_id && deliveredRef.current !== result.report_id) {
+        deliveredRef.current = result.report_id;
+        startupResearchService
+          .get(result.report_id)
+          .then(onReportReady)
+          .catch(() => setError("Report saved but could not be loaded — check history"));
       }
-    };
-    animTimerRef.current = setTimeout(advance, STEP_DURATIONS[0]);
-  };
+    }
+  }, [progress, onReportReady]);
 
-  const stopStepAnimation = () => {
-    workflowDoneRef.current = true;
-    if (animTimerRef.current) clearTimeout(animTimerRef.current);
-  };
+  useEffect(() => {
+    if (pollError) {
+      setError(pollError);
+      setPhase("failed");
+      setPollPath(null);
+    }
+  }, [pollError]);
 
   const handleGenerate = async () => {
     if (!startupIdea.trim()) return;
     setPhase("running");
     setError(null);
-    setResultMeta(null);
-    startStepAnimation();
+    setElapsedMs(0);
+    deliveredRef.current = null;
+    reset();
 
     try {
-      const result = await startupResearchService.run({
+      const { poll_url } = await startupResearchService.run({
         startup_idea: startupIdea.trim(),
         startup_name: startupName.trim() || undefined,
         send_to_slack: sendToSlack,
       });
-
-      stopStepAnimation();
-      setSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
-      setResultMeta({
-        competitorsFound: result.competitors_found,
-        sourcesAnalyzed: result.sources_analyzed,
-        researchScore: result.research_score,
-      });
-      setPhase("done");
-
-      // Fetch full report and surface it
-      const fullReport = await startupResearchService.get(result.report_id);
-      onReportReady(fullReport);
+      setPollPath(poll_url);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Research pipeline failed";
-      stopStepAnimation();
-      setError(msg);
+      setError(e instanceof Error ? e.message : "Could not start the pipeline");
       setPhase("failed");
-      setSteps((prev) =>
-        prev.map((s) => (s.status === "running" ? { ...s, status: "failed" } : s))
-      );
     }
   };
 
   const handleReset = () => {
     setPhase("idle");
     setError(null);
-    setResultMeta(null);
-    setSteps(RESEARCH_STEPS.map((s) => ({ id: s.id, status: "pending" })));
     setElapsedMs(0);
-    workflowDoneRef.current = false;
+    setPollPath(null);
+    deliveredRef.current = null;
+    reset();
   };
 
-  const formatElapsed = (ms: number) => {
-    const s = Math.floor(ms / 1000);
-    if (s < 60) return `${s}s`;
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
-  };
+  const result = progress?.result as unknown as StartupResearchResult | null;
+  const steps = progress?.steps ?? [];
 
   return (
     <motion.div
@@ -221,7 +201,6 @@ export function ResearchLauncher({ onReportReady }: Props) {
                 rows={3}
                 className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/50 transition-all resize-none"
               />
-              {/* Example ideas */}
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {EXAMPLE_IDEAS.slice(0, 3).map((idea) => (
                   <button
@@ -259,81 +238,30 @@ export function ResearchLauncher({ onReportReady }: Props) {
               )}
             >
               <Send className="w-3.5 h-3.5" />
-              {sendToSlack ? "Will deliver summary to Slack" : "Also deliver summary to Slack"}
+              {sendToSlack
+                ? "Will deliver summary to Slack"
+                : "Also deliver summary to Slack"}
             </button>
           </div>
         )}
 
-        {/* Step timeline — shown during/after run */}
-        {(phase === "running" || phase === "done" || phase === "failed") && (
+        {/* Live step timeline — every row is real backend state */}
+        {phase !== "idle" && (
           <div className="space-y-1.5">
-            {RESEARCH_STEPS.map((step, i) => {
-              const stepState = steps[i];
-              const Icon = step.icon;
-              const isRunning = stepState.status === "running";
-              const isDone = stepState.status === "done";
-              const isFailed = stepState.status === "failed";
-              const isPending = stepState.status === "pending";
-
-              return (
-                <motion.div
-                  key={step.id}
-                  animate={{ opacity: isPending ? 0.3 : 1 }}
-                  className={cn(
-                    "flex items-center gap-2.5 rounded-lg px-3 py-2 border transition-all text-xs",
-                    isRunning && "bg-purple-500/5 border-purple-500/20",
-                    isDone && "bg-emerald-500/5 border-emerald-500/10",
-                    isFailed && "bg-rose-500/5 border-rose-500/20",
-                    isPending && "bg-zinc-800/20 border-zinc-800/40"
-                  )}
-                >
-                  {/* Status icon */}
-                  <div className="flex-shrink-0 w-4">
-                    {isRunning && <Loader2 className="w-3.5 h-3.5 text-purple-400 animate-spin" />}
-                    {isDone && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
-                    {isFailed && <XCircle className="w-3.5 h-3.5 text-rose-400" />}
-                    {isPending && (
-                      <div className="w-3.5 h-3.5 rounded-full border border-zinc-700 flex items-center justify-center">
-                        <div className="w-1 h-1 rounded-full bg-zinc-700" />
-                      </div>
-                    )}
-                  </div>
-
-                  <Icon
-                    className={cn(
-                      "w-3 h-3 flex-shrink-0",
-                      isRunning ? step.color : isDone ? "text-emerald-400/70" : "text-zinc-600"
-                    )}
-                  />
-
-                  <span
-                    className={cn(
-                      "font-medium flex-1",
-                      isRunning ? "text-zinc-200" : isDone ? "text-zinc-400" : "text-zinc-600"
-                    )}
-                  >
-                    {`Step ${i + 1}: ${step.label}`}
-                    {isRunning && (
-                      <motion.span
-                        animate={{ opacity: [0, 1, 0] }}
-                        transition={{ duration: 1.2, repeat: Infinity }}
-                      >
-                        …
-                      </motion.span>
-                    )}
-                  </span>
-
-                  {isDone && (
-                    <span className="text-[10px] text-emerald-500 font-medium">Done</span>
-                  )}
-                </motion.div>
-              );
-            })}
+            {steps.length === 0 && (
+              <div className="flex items-center gap-2 text-xs text-zinc-500 px-3 py-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                Starting pipeline…
+              </div>
+            )}
+            {steps.map((step, i) => (
+              <StepRow key={step.key} step={step} index={i} />
+            ))}
           </div>
         )}
 
         {/* Success result */}
-        {phase === "done" && resultMeta && (
+        {phase === "done" && result && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -342,18 +270,28 @@ export function ResearchLauncher({ onReportReady }: Props) {
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               <p className="text-sm font-semibold text-emerald-400">Research Complete</p>
-              <span className="ml-auto text-xs font-mono text-zinc-500">{formatElapsed(elapsedMs)}</span>
+              <span className="ml-auto text-xs font-mono text-zinc-500">
+                {formatElapsed(progress?.duration_ms ?? elapsedMs)}
+              </span>
             </div>
             <div className="flex gap-4 text-xs text-zinc-400">
               <span>
-                <span className="text-emerald-400 font-semibold">{resultMeta.competitorsFound}</span> competitors
+                <span className="text-emerald-400 font-semibold">
+                  {result.competitors_found}
+                </span>{" "}
+                competitors
               </span>
               <span>
-                <span className="text-brand-400 font-semibold">{resultMeta.sourcesAnalyzed}</span> sources
+                <span className="text-brand-400 font-semibold">
+                  {result.sources_analyzed}
+                </span>{" "}
+                sources
               </span>
               <span>
                 Score{" "}
-                <span className="text-purple-400 font-semibold">{resultMeta.researchScore}/100</span>
+                <span className="text-purple-400 font-semibold">
+                  {result.research_score}/100
+                </span>
               </span>
             </div>
             <p className="text-xs text-zinc-500">Report loaded in the viewer →</p>
@@ -368,7 +306,7 @@ export function ResearchLauncher({ onReportReady }: Props) {
             className="rounded-lg bg-rose-500/5 border border-rose-500/20 px-4 py-3"
           >
             <p className="text-xs font-semibold text-rose-400 mb-1">Research Failed</p>
-            <p className="text-xs text-zinc-500 font-mono">{error}</p>
+            <p className="text-xs text-zinc-500 font-mono break-words">{error}</p>
           </motion.div>
         )}
       </div>
@@ -393,7 +331,7 @@ export function ResearchLauncher({ onReportReady }: Props) {
         {phase === "running" && (
           <div className="flex items-center gap-2 text-xs text-zinc-500">
             <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
-            Running autonomous research pipeline…
+            {progress?.current_step_label ?? "Running autonomous research pipeline…"}
           </div>
         )}
         {(phase === "done" || phase === "failed") && (
@@ -407,4 +345,81 @@ export function ResearchLauncher({ onReportReady }: Props) {
       </div>
     </motion.div>
   );
+}
+
+function StepRow({ step, index }: { step: JobStep; index: number }) {
+  const Icon = STEP_ICONS[step.key] ?? FileText;
+  const { status } = step;
+  const isRunning = status === "running";
+  const isDone = status === "done";
+  const isFailed = status === "failed";
+  const isSkipped = status === "skipped";
+  const isPending = status === "pending";
+
+  return (
+    <motion.div
+      animate={{ opacity: isPending ? 0.3 : isSkipped ? 0.55 : 1 }}
+      className={cn(
+        "flex items-center gap-2.5 rounded-lg px-3 py-2 border transition-all text-xs",
+        isRunning && "bg-purple-500/5 border-purple-500/20",
+        isDone && "bg-emerald-500/5 border-emerald-500/10",
+        isFailed && "bg-rose-500/5 border-rose-500/20",
+        isSkipped && "bg-zinc-800/20 border-zinc-800/50",
+        isPending && "bg-zinc-800/20 border-zinc-800/40"
+      )}
+    >
+      <div className="flex-shrink-0 w-4">
+        {isRunning && <Loader2 className="w-3.5 h-3.5 text-purple-400 animate-spin" />}
+        {isDone && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+        {isFailed && <XCircle className="w-3.5 h-3.5 text-rose-400" />}
+        {isSkipped && <MinusCircle className="w-3.5 h-3.5 text-zinc-600" />}
+        {isPending && (
+          <div className="w-3.5 h-3.5 rounded-full border border-zinc-700 flex items-center justify-center">
+            <div className="w-1 h-1 rounded-full bg-zinc-700" />
+          </div>
+        )}
+      </div>
+
+      <Icon
+        className={cn(
+          "w-3 h-3 flex-shrink-0",
+          isRunning
+            ? "text-purple-400"
+            : isDone
+            ? "text-emerald-400/70"
+            : "text-zinc-600"
+        )}
+      />
+
+      <div className="flex-1 min-w-0">
+        <span
+          className={cn(
+            "font-medium block truncate",
+            isRunning ? "text-zinc-200" : isDone ? "text-zinc-400" : "text-zinc-600"
+          )}
+        >
+          {`Step ${index + 1}: ${step.label}`}
+        </span>
+        {step.detail && !isPending && (
+          <span className="text-[10px] text-zinc-600 block truncate">{step.detail}</span>
+        )}
+      </div>
+
+      {/* Real server-measured duration — not an animation estimate */}
+      {(isDone || isFailed) && step.duration_ms !== null && (
+        <span className="text-[10px] text-zinc-600 font-mono tabular-nums flex-shrink-0">
+          {formatElapsed(step.duration_ms)}
+        </span>
+      )}
+      {isSkipped && (
+        <span className="text-[10px] text-zinc-600 flex-shrink-0">Skipped</span>
+      )}
+    </motion.div>
+  );
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }

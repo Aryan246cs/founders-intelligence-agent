@@ -14,10 +14,13 @@ import {
   FileText,
   Send,
   Zap,
+  MinusCircle,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { executionsService } from "@/services/executions";
-import type { WorkflowExecution } from "@/lib/types";
+import { useJobProgress } from "@/hooks/useJobProgress";
+import type { JobStep, WorkflowExecution } from "@/lib/types";
 
 interface Props {
   open: boolean;
@@ -25,373 +28,393 @@ interface Props {
   onComplete?: (execution: WorkflowExecution) => void;
 }
 
-const WORKFLOW_STEPS = [
-  { id: "research", label: "Collecting competitor signals", icon: Globe, color: "text-brand-400" },
-  { id: "competitor_monitor", label: "Running competitor analysis", icon: Crosshair, color: "text-amber-400" },
-  { id: "memory", label: "Running memory comparison", icon: Brain, color: "text-purple-400" },
-  { id: "briefing", label: "Generating strategic insights", icon: FileText, color: "text-emerald-400" },
-  { id: "slack", label: "Delivering executive briefing to Slack", icon: Send, color: "text-rose-400" },
-];
-
-type StepStatus = "pending" | "running" | "done" | "failed";
-
-interface StepState {
-  id: string;
-  status: StepStatus;
-  output?: string;
-  durationMs?: number;
+/**
+ * Icons are matched on the agent named in the step label, because the plan —
+ * and therefore the step list — is generated at runtime by the PlannerAgent.
+ */
+function iconForStep(step: JobStep): React.ElementType {
+  const label = step.label.toLowerCase();
+  if (step.key === "plan") return ClipboardList;
+  if (label.includes("competitor")) return Crosshair;
+  if (label.includes("search") || label.includes("web")) return Globe;
+  if (label.includes("memory")) return Brain;
+  if (label.includes("briefing")) return FileText;
+  if (label.includes("slack") || label.includes("deliver")) return Send;
+  return Zap;
 }
 
 export function GenerateBriefingModal({ open, onClose, onComplete }: Props) {
   const [phase, setPhase] = useState<"idle" | "running" | "done" | "failed">("idle");
-  const [steps, setSteps] = useState<StepState[]>(
-    WORKFLOW_STEPS.map((s) => ({ id: s.id, status: "pending" }))
-  );
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [result, setResult] = useState<WorkflowExecution | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sendToSlack, setSendToSlack] = useState(false);
   const [request, setRequest] = useState("");
+  const [pollPath, setPollPath] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const animTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
-  const workflowDoneRef = useRef(false);
+  const completedRef = useRef(false);
 
-  // Realistic time each step spends "running" before auto-advancing (ms)
-  // These are visual estimates — actual backend may be faster or slower
-  const STEP_DURATIONS = [14000, 20000, 8000, 18000, 5000];
+  const { progress, error: pollError, reset } = useJobProgress(pollPath);
 
   // Reset when modal opens
   useEffect(() => {
     if (open) {
       setPhase("idle");
-      setSteps(WORKFLOW_STEPS.map((s) => ({ id: s.id, status: "pending" })));
       setElapsedMs(0);
-      setResult(null);
       setError(null);
       setRequest("");
-      workflowDoneRef.current = false;
+      setPollPath(null);
+      completedRef.current = false;
+      reset();
     }
-  }, [open]);
+  }, [open, reset]);
 
   // Elapsed timer
   useEffect(() => {
     if (phase === "running") {
       startTimeRef.current = Date.now();
-      timerRef.current = setInterval(() => {
-        setElapsedMs(Date.now() - startTimeRef.current);
-      }, 100);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(
+        () => setElapsedMs(Date.now() - startTimeRef.current),
+        100
+      );
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
     }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [phase]);
 
-  // Time-based step animation — advances independently of backend polling
-  const startStepAnimation = () => {
-    let currentStep = 0;
-    workflowDoneRef.current = false;
+  // React to terminal job states
+  useEffect(() => {
+    if (!progress) return;
 
-    // Mark first step running immediately
-    setSteps((prev) =>
-      prev.map((s, i) => ({ ...s, status: i === 0 ? "running" : "pending" }))
-    );
+    if (progress.status === "failed") {
+      setError(progress.error ?? "Workflow failed");
+      setPhase("failed");
+      setPollPath(null);
+      return;
+    }
 
-    const advance = () => {
-      if (workflowDoneRef.current) return; // backend already finished — stop
+    if (progress.status === "completed" && !completedRef.current) {
+      completedRef.current = true;
+      setPhase("done");
+      setPollPath(null);
+      const raw = (progress.result ?? {}) as Record<string, unknown>;
+      onComplete?.({
+        id: (raw.id as string) ?? "",
+        executionId: (raw.execution_id as string) ?? "",
+        status: "completed",
+        triggerSource: (raw.trigger_source as string) ?? "manual",
+        requestSummary: (raw.request_summary as string) ?? "",
+        planSummary: (raw.plan_summary as string) ?? "",
+        stepsTotal: (raw.steps_total as number) ?? 0,
+        stepsCompleted: (raw.steps_completed as number) ?? 0,
+        briefingAvailable: (raw.briefing_available as boolean) ?? false,
+        slackDelivered: (raw.slack_delivered as boolean) ?? false,
+        comparisonRan: (raw.comparison_ran as boolean) ?? false,
+        hasCompetitorChanges: (raw.has_competitor_changes as boolean) ?? false,
+        startedAt: (raw.started_at as string) ?? "",
+        completedAt: (raw.completed_at as string) ?? "",
+        durationMs: (raw.duration_ms as number) ?? 0,
+      });
+    }
+  }, [progress, onComplete]);
 
-      const nextStep = currentStep + 1;
-
-      if (nextStep < WORKFLOW_STEPS.length) {
-        // Mark current step done, next step running
-        setSteps((prev) =>
-          prev.map((s, i) => {
-            if (i < nextStep) return { ...s, status: "done" };
-            if (i === nextStep) return { ...s, status: "running" };
-            return s;
-          })
-        );
-        currentStep = nextStep;
-        // Schedule next advance after this step's duration
-        animTimerRef.current = setTimeout(advance, STEP_DURATIONS[nextStep] ?? 10000);
-      }
-      // If we've animated all steps, just hold the last one as "running"
-      // until the real backend result arrives
-    };
-
-    animTimerRef.current = setTimeout(advance, STEP_DURATIONS[0]);
-  };
-
-  const stopStepAnimation = () => {
-    workflowDoneRef.current = true;
-    if (animTimerRef.current) clearTimeout(animTimerRef.current);
-  };
+  useEffect(() => {
+    if (pollError) {
+      setError(pollError);
+      setPhase("failed");
+      setPollPath(null);
+    }
+  }, [pollError]);
 
   const handleGenerate = async () => {
     setPhase("running");
-
-    // Start the local time-based step animation immediately
-    startStepAnimation();
+    setError(null);
+    setElapsedMs(0);
+    completedRef.current = false;
+    reset();
 
     try {
-      const execution = await executionsService.run({
-        request: request.trim() || "Monitor OpenAI, Anthropic, Google DeepMind and generate founder intelligence briefing",
+      const { poll_url } = await executionsService.run({
+        request:
+          request.trim() ||
+          "Monitor OpenAI, Anthropic, Google DeepMind and generate founder intelligence briefing",
         send_to_slack: sendToSlack,
         trigger_source: "manual",
       });
-
-      const execId = (execution as unknown as Record<string, unknown>).execution_id as string
-        ?? (execution as unknown as Record<string, unknown>).id as string;
-
-      if (!execId) {
-        throw new Error("No execution ID returned");
-      }
-
-      // Poll for completion — no longer drives the animation
-      const final = await executionsService.poll(
-        execId,
-        () => {}, // animation is time-based, not poll-based
-        2000,
-        300_000
-      );
-
-      // Stop local animation and snap all steps to done
-      stopStepAnimation();
-      setSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
-      setResult(final);
-      setPhase("done");
-      onComplete?.(final);
+      setPollPath(poll_url);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Workflow failed";
-      stopStepAnimation();
-      setError(msg);
+      setError(e instanceof Error ? e.message : "Could not start the workflow");
       setPhase("failed");
-      setSteps((prev) =>
-        prev.map((s) => (s.status === "running" ? { ...s, status: "failed" } : s))
-      );
     }
   };
 
-  const formatElapsed = (ms: number) => {
-    if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
-    const s = Math.floor(ms / 1000);
-    if (s < 60) return `${s}s`;
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
-  };
+  const steps = progress?.steps ?? [];
+  const briefingDelivered = Boolean(
+    (progress?.result as Record<string, unknown> | null)?.slack_delivered
+  );
+
+  const dismissable = phase === "idle" || phase === "done" || phase === "failed";
 
   return (
     <AnimatePresence>
       {open && (
-        <>
-          {/* Backdrop — also acts as the centering container */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={dismissable ? onClose : undefined}
+        >
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={phase === "idle" || phase === "done" || phase === "failed" ? onClose : undefined}
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ duration: 0.2 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg flex flex-col glass rounded-2xl border border-zinc-800/60 shadow-glass"
+            style={{ maxHeight: "min(640px, calc(100vh - 32px))" }}
           >
-            {/* Modal — stop click propagation so clicking inside doesn't close */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 16 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 16 }}
-              transition={{ duration: 0.2 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-lg flex flex-col glass rounded-2xl border border-zinc-800/60 shadow-glass"
-              style={{ maxHeight: "min(640px, calc(100vh - 32px))" }}
-            >
-              {/* Header */}
-              <div className="px-6 py-4 border-b border-zinc-800/60 flex items-center justify-between flex-shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">
-                    <Zap className="w-4 h-4 text-brand-400" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-semibold text-zinc-100">Generate Intelligence Briefing</h2>
-                    <p className="text-xs text-zinc-500">Autonomous AI workflow</p>
-                  </div>
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-zinc-800/60 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">
+                  <Zap className="w-4 h-4 text-brand-400" />
                 </div>
-                {(phase === "idle" || phase === "done" || phase === "failed") && (
-                  <button
-                    onClick={onClose}
-                    className="w-7 h-7 rounded-lg bg-zinc-800/60 flex items-center justify-center hover:bg-zinc-700/60 transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5 text-zinc-400" />
-                  </button>
-                )}
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-100">
+                    Generate Intelligence Briefing
+                  </h2>
+                  <p className="text-xs text-zinc-500">Autonomous AI workflow</p>
+                </div>
               </div>
+              {dismissable && (
+                <button
+                  onClick={onClose}
+                  className="w-7 h-7 rounded-lg bg-zinc-800/60 flex items-center justify-center hover:bg-zinc-700/60 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5 text-zinc-400" />
+                </button>
+              )}
+            </div>
 
-              {/* Body — scrollable */}
-              <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1 min-h-0">
-                {/* Elapsed timer */}
-                {phase === "running" && (
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <motion.div
-                        animate={{ opacity: [0.4, 1, 0.4] }}
-                        transition={{ duration: 1, repeat: Infinity }}
-                        className="w-1.5 h-1.5 rounded-full bg-brand-400"
-                        style={{ boxShadow: "0 0 6px rgba(99,102,241,0.8)" }}
-                      />
-                      <span className="text-xs font-medium text-brand-400">Operation in progress</span>
-                    </div>
-                    <span className="text-xs font-mono text-zinc-500 tabular-nums">
-                      {formatElapsed(elapsedMs)}
+            {/* Body */}
+            <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1 min-h-0">
+              {phase === "running" && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <motion.div
+                      animate={{ opacity: [0.4, 1, 0.4] }}
+                      transition={{ duration: 1, repeat: Infinity }}
+                      className="w-1.5 h-1.5 rounded-full bg-brand-400"
+                      style={{ boxShadow: "0 0 6px rgba(99,102,241,0.8)" }}
+                    />
+                    <span className="text-xs font-medium text-brand-400">
+                      {progress?.current_step_label ?? "Planning workflow"}
                     </span>
                   </div>
-                )}
-
-                {/* Step timeline */}
-                <div className="space-y-2">
-                  {WORKFLOW_STEPS.map((step, i) => {
-                    const stepState = steps[i];
-                    const Icon = step.icon;
-                    const isRunning = stepState.status === "running";
-                    const isDone = stepState.status === "done";
-                    const isFailed = stepState.status === "failed";
-                    const isPending = stepState.status === "pending";
-
-                    return (
-                      <motion.div
-                        key={step.id}
-                        animate={{ opacity: isPending ? 0.35 : 1 }}
-                        className={cn(
-                          "flex items-center gap-3 rounded-lg px-4 py-2.5 border transition-all",
-                          isRunning && "bg-brand-500/5 border-brand-500/20",
-                          isDone && "bg-emerald-500/5 border-emerald-500/15",
-                          isFailed && "bg-rose-500/5 border-rose-500/20",
-                          isPending && "bg-zinc-800/20 border-zinc-800/40"
-                        )}
-                      >
-                        <div className="flex-shrink-0">
-                          {isRunning && <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />}
-                          {isDone && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-                          {isFailed && <XCircle className="w-4 h-4 text-rose-400" />}
-                          {isPending && (
-                            <div className="w-4 h-4 rounded-full border border-zinc-700 flex items-center justify-center">
-                              <div className="w-1.5 h-1.5 rounded-full bg-zinc-700" />
-                            </div>
-                          )}
-                        </div>
-                        <Icon className={cn("w-3.5 h-3.5 flex-shrink-0", isRunning ? step.color : isDone ? "text-emerald-400" : "text-zinc-600")} />
-                        <span className={cn("text-xs font-medium flex-1", isRunning ? "text-zinc-200" : isDone ? "text-zinc-300" : "text-zinc-600")}>
-                          {step.label}
-                          {isRunning && (
-                            <motion.span animate={{ opacity: [0, 1, 0] }} transition={{ duration: 1.2, repeat: Infinity }}>…</motion.span>
-                          )}
-                        </span>
-                        {isDone && <span className="text-[10px] text-emerald-500 font-medium">Done</span>}
-                      </motion.div>
-                    );
-                  })}
+                  <span className="text-xs font-mono text-zinc-500 tabular-nums">
+                    {formatElapsed(elapsedMs)}
+                  </span>
                 </div>
+              )}
 
-                {/* Result */}
-                {phase === "done" && result && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-4 py-3 space-y-1.5"
-                  >
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      <p className="text-sm font-semibold text-emerald-400">Briefing Generated</p>
+              {/* Live step timeline — the plan is built at runtime, so the list
+                  grows once the planner decides what to run */}
+              {phase !== "idle" && (
+                <div className="space-y-2">
+                  {steps.length === 0 && (
+                    <div className="flex items-center gap-2 text-xs text-zinc-500 px-4 py-2.5">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400" />
+                      Starting workflow…
                     </div>
-                    <p className="text-xs text-zinc-400">
-                      Completed in {formatElapsed(elapsedMs)} · Intelligence briefing is now available.
+                  )}
+                  {steps.map((step) => (
+                    <StepRow key={step.key} step={step} />
+                  ))}
+                </div>
+              )}
+
+              {/* Result */}
+              {phase === "done" && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-4 py-3 space-y-1.5"
+                >
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <p className="text-sm font-semibold text-emerald-400">
+                      Briefing Generated
                     </p>
-                    {result.slackDelivered && (
-                      <p className="text-xs text-zinc-400">✓ Delivered to Slack</p>
+                  </div>
+                  <p className="text-xs text-zinc-400">
+                    Completed in {formatElapsed(progress?.duration_ms ?? elapsedMs)} ·
+                    Intelligence briefing is now available.
+                  </p>
+                  {briefingDelivered && (
+                    <p className="text-xs text-zinc-400">✓ Delivered to Slack</p>
+                  )}
+                </motion.div>
+              )}
+
+              {/* Error */}
+              {phase === "failed" && error && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-lg bg-rose-500/5 border border-rose-500/20 px-4 py-3"
+                >
+                  <p className="text-xs font-semibold text-rose-400 mb-1">
+                    Workflow Failed
+                  </p>
+                  <p className="text-xs text-zinc-500 font-mono break-words">{error}</p>
+                </motion.div>
+              )}
+
+              {/* Request input + Slack toggle (idle only) */}
+              {phase === "idle" && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-zinc-400 mb-1.5 block">
+                      What should the AI research?
+                    </label>
+                    <textarea
+                      value={request}
+                      onChange={(e) => setRequest(e.target.value)}
+                      placeholder="e.g. Monitor OpenAI, Anthropic and generate a founder briefing on enterprise AI trends…"
+                      rows={3}
+                      className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-brand-500/50 transition-all resize-none"
+                    />
+                    <p className="text-[10px] text-zinc-600 mt-1">
+                      Leave blank to run the default intelligence sweep.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setSendToSlack(!sendToSlack)}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all border w-full",
+                      sendToSlack
+                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        : "bg-zinc-800/30 text-zinc-500 border-zinc-700/30 hover:text-zinc-300"
                     )}
-                  </motion.div>
-                )}
-
-                {/* Error */}
-                {phase === "failed" && error && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="rounded-lg bg-rose-500/5 border border-rose-500/20 px-4 py-3"
                   >
-                    <p className="text-xs font-semibold text-rose-400 mb-1">Workflow Failed</p>
-                    <p className="text-xs text-zinc-500 font-mono">{error}</p>
-                  </motion.div>
-                )}
+                    <Send className="w-3.5 h-3.5" />
+                    {sendToSlack ? "Will deliver to Slack" : "Also deliver to Slack"}
+                  </button>
+                </div>
+              )}
+            </div>
 
-                {/* Request input + Slack toggle (idle only) */}
-                {phase === "idle" && (
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs font-medium text-zinc-400 mb-1.5 block">
-                        What should the AI research?
-                      </label>
-                      <textarea
-                        value={request}
-                        onChange={(e) => setRequest(e.target.value)}
-                        placeholder="e.g. Monitor OpenAI, Anthropic and generate a founder briefing on enterprise AI trends…"
-                        rows={3}
-                        className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-brand-500/50 transition-all resize-none"
-                      />
-                      <p className="text-[10px] text-zinc-600 mt-1">Leave blank to run the default intelligence sweep.</p>
-                    </div>
-                    <button
-                      onClick={() => setSendToSlack(!sendToSlack)}
-                      className={cn(
-                        "flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all border w-full",
-                        sendToSlack
-                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                          : "bg-zinc-800/30 text-zinc-500 border-zinc-700/30 hover:text-zinc-300"
-                      )}
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      {sendToSlack ? "Will deliver to Slack" : "Also deliver to Slack"}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Footer — always visible */}
-              <div className="px-6 py-4 border-t border-zinc-800/60 flex items-center justify-end gap-3 flex-shrink-0">
-                {phase === "idle" && (
-                  <>
-                    <button
-                      onClick={onClose}
-                      className="px-4 py-2 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleGenerate}
-                      className="flex items-center gap-2 px-5 py-2 rounded-lg bg-brand-500 text-sm font-semibold text-white hover:bg-brand-400 transition-all shadow-glow-sm"
-                    >
-                      <Play className="w-3.5 h-3.5" />
-                      Launch Operation
-                    </button>
-                  </>
-                )}
-                {phase === "running" && (
-                  <div className="flex items-center gap-2 text-xs text-zinc-500">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Running autonomous workflow…
-                  </div>
-                )}
-                {(phase === "done" || phase === "failed") && (
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-zinc-800/60 flex items-center justify-end gap-3 flex-shrink-0">
+              {phase === "idle" && (
+                <>
                   <button
                     onClick={onClose}
-                    className="px-5 py-2 rounded-lg bg-zinc-800 text-sm font-medium text-zinc-200 hover:bg-zinc-700 transition-colors"
+                    className="px-4 py-2 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
                   >
-                    Close
+                    Cancel
                   </button>
-                )}
-              </div>
-            </motion.div>
+                  <button
+                    onClick={handleGenerate}
+                    className="flex items-center gap-2 px-5 py-2 rounded-lg bg-brand-500 text-sm font-semibold text-white hover:bg-brand-400 transition-all shadow-glow-sm"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    Launch Operation
+                  </button>
+                </>
+              )}
+              {phase === "running" && (
+                <div className="flex items-center gap-2 text-xs text-zinc-500">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  {progress
+                    ? `Step ${progress.steps_completed + 1} of ${progress.steps_total}`
+                    : "Running autonomous workflow…"}
+                </div>
+              )}
+              {(phase === "done" || phase === "failed") && (
+                <button
+                  onClick={onClose}
+                  className="px-5 py-2 rounded-lg bg-zinc-800 text-sm font-medium text-zinc-200 hover:bg-zinc-700 transition-colors"
+                >
+                  Close
+                </button>
+              )}
+            </div>
           </motion.div>
-        </>
+        </motion.div>
       )}
     </AnimatePresence>
   );
+}
+
+function StepRow({ step }: { step: JobStep }) {
+  const Icon = iconForStep(step);
+  const { status } = step;
+  const isRunning = status === "running";
+  const isDone = status === "done";
+  const isFailed = status === "failed";
+  const isSkipped = status === "skipped";
+  const isPending = status === "pending";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: isPending ? 0.35 : isSkipped ? 0.55 : 1, y: 0 }}
+      className={cn(
+        "flex items-center gap-3 rounded-lg px-4 py-2.5 border transition-all",
+        isRunning && "bg-brand-500/5 border-brand-500/20",
+        isDone && "bg-emerald-500/5 border-emerald-500/15",
+        isFailed && "bg-rose-500/5 border-rose-500/20",
+        (isSkipped || isPending) && "bg-zinc-800/20 border-zinc-800/40"
+      )}
+    >
+      <div className="flex-shrink-0">
+        {isRunning && <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />}
+        {isDone && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+        {isFailed && <XCircle className="w-4 h-4 text-rose-400" />}
+        {isSkipped && <MinusCircle className="w-4 h-4 text-zinc-600" />}
+        {isPending && (
+          <div className="w-4 h-4 rounded-full border border-zinc-700 flex items-center justify-center">
+            <div className="w-1.5 h-1.5 rounded-full bg-zinc-700" />
+          </div>
+        )}
+      </div>
+      <Icon
+        className={cn(
+          "w-3.5 h-3.5 flex-shrink-0",
+          isRunning ? "text-brand-400" : isDone ? "text-emerald-400" : "text-zinc-600"
+        )}
+      />
+      <div className="flex-1 min-w-0">
+        <span
+          className={cn(
+            "text-xs font-medium block truncate",
+            isRunning ? "text-zinc-200" : isDone ? "text-zinc-300" : "text-zinc-600"
+          )}
+        >
+          {step.label}
+        </span>
+        {step.detail && !isPending && (
+          <span className="text-[10px] text-zinc-600 block truncate">{step.detail}</span>
+        )}
+      </div>
+      {(isDone || isFailed) && step.duration_ms !== null && (
+        <span className="text-[10px] text-zinc-600 font-mono tabular-nums flex-shrink-0">
+          {formatElapsed(step.duration_ms)}
+        </span>
+      )}
+    </motion.div>
+  );
+}
+
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }

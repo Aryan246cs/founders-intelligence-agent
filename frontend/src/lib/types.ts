@@ -2,6 +2,65 @@ export type AgentStatus = "active" | "idle" | "running" | "error";
 export type Priority = "critical" | "high" | "medium" | "low";
 export type ExecutionStatus = "completed" | "running" | "failed";
 
+// ---------------------------------------------------------------------------
+// Job progress — live step state for long-running pipeline runs
+// ---------------------------------------------------------------------------
+
+export type JobStepStatus = "pending" | "running" | "done" | "failed" | "skipped";
+export type JobStatus = "queued" | "running" | "completed" | "failed";
+
+export interface JobStep {
+  key: string;
+  label: string;
+  status: JobStepStatus;
+  detail: string;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface JobProgress {
+  job_id: string;
+  kind: string;
+  summary: string;
+  status: JobStatus;
+  execution_id: string | null;
+  steps: JobStep[];
+  steps_total: number;
+  steps_completed: number;
+  current_step: string | null;
+  current_step_label: string | null;
+  progress_pct: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number;
+  error: string | null;
+  result: Record<string, unknown> | null;
+}
+
+// ---------------------------------------------------------------------------
+// Service health
+// ---------------------------------------------------------------------------
+
+export type ServiceStatus = "connected" | "error" | "not_configured";
+
+export interface ServiceHealth {
+  name: string;
+  status: ServiceStatus;
+  ok: boolean;
+  configured: boolean;
+  detail: string;
+}
+
+export interface SystemHealth {
+  status: "healthy" | "degraded" | "down" | "offline";
+  env: string;
+  services: ServiceHealth[];
+  healthy_count: number;
+  total_count: number;
+}
+
 export interface KpiMetric {
   label: string;
   value: string | number;
