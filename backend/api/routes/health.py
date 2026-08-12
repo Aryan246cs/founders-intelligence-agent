@@ -78,6 +78,12 @@ def _check_groq_sync() -> Dict[str, Any]:
         return _result("Groq", True, f"Model {settings.groq_model} ready")
     except Exception as e:
         msg = str(e)
+        if "expired_api_key" in msg:
+            return _result(
+                "Groq",
+                False,
+                "API key has expired — generate a new one at console.groq.com/keys",
+            )
         if "invalid_api_key" in msg or "401" in msg or "Authentication" in msg:
             return _result(
                 "Groq", False, "API key rejected — generate a new key at console.groq.com"
@@ -118,7 +124,7 @@ def _check_n8n() -> Dict[str, Any]:
     return _result("n8n", True, f"Webhook base {url}")
 
 
-async def _with_timeout(fn, name: str) -> Dict[str, Any]:
+async def _probe_once(fn, name: str) -> Dict[str, Any]:
     """Run a blocking probe off the event loop with a hard timeout."""
     try:
         return await asyncio.wait_for(
@@ -128,6 +134,21 @@ async def _with_timeout(fn, name: str) -> Dict[str, Any]:
         return _result(name, False, f"Timed out after {PROBE_TIMEOUT_SECONDS:.0f}s")
     except Exception as e:
         return _result(name, False, str(e)[:180])
+
+
+async def _with_timeout(fn, name: str) -> Dict[str, Any]:
+    """
+    Probe a service, retrying once on failure.
+
+    A momentary wifi drop or DNS hiccup must not paint the whole UI red for a
+    full poll interval. One cheap retry absorbs the blip; anything that fails
+    twice in a row is worth reporting.
+    """
+    result = await _probe_once(fn, name)
+    if result["ok"] or not result["configured"]:
+        return result
+    await asyncio.sleep(0.4)
+    return await _probe_once(fn, name)
 
 
 @router.get("")
@@ -140,12 +161,28 @@ async def health_check():
 @router.get("/services")
 async def services_health():
     """Readiness — probes every external dependency in parallel."""
-    supabase, groq, apify = await asyncio.gather(
+    networked = await asyncio.gather(
         _with_timeout(_check_supabase_sync, "Supabase"),
         _with_timeout(_check_groq_sync, "Groq"),
         _with_timeout(_check_apify_sync, "Apify"),
     )
-    services = [supabase, groq, apify, _check_slack(), _check_n8n()]
+
+    # Three unrelated providers do not fail in the same second. When every
+    # network-dependent probe is down while the config-only checks are fine,
+    # the machine lost connectivity — say that, instead of accusing each
+    # provider of an outage it is not having.
+    if all(not s["ok"] for s in networked):
+        networked = [
+            _result(
+                s["name"],
+                False,
+                "No network from the backend — every outbound probe failed. "
+                "Check connectivity, then re-run this check.",
+            )
+            for s in networked
+        ]
+
+    services = [*networked, _check_slack(), _check_n8n()]
 
     # Supabase and Groq are load-bearing: without them no pipeline can complete.
     critical = [s for s in services if s["name"] in ("Supabase", "Groq")]

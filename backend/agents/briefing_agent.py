@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone, timedelta
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
@@ -127,31 +128,44 @@ def _get_findings_for_workflow(
     return findings
 
 
+# Keyword → display label. The label is explicit because `.title()` mangles
+# the ones that matter ("Ai", "Saas", "Edtech").
+DOMAIN_TOPICS: Dict[str, str] = {
+    "quick commerce": "Quick Commerce",
+    "food delivery": "Food Delivery",
+    "enterprise ai": "Enterprise AI",
+    "generative ai": "Generative AI",
+    "supply chain": "Supply Chain",
+    "fintech": "Fintech",
+    "edtech": "EdTech",
+    "healthtech": "HealthTech",
+    "proptech": "PropTech",
+    "insurtech": "InsurTech",
+    "legaltech": "LegalTech",
+    "hrtech": "HRTech",
+    "martech": "MarTech",
+    "ecommerce": "E-commerce",
+    "logistics": "Logistics",
+    "mobility": "Mobility",
+    "crypto": "Crypto",
+    "retail": "Retail",
+    "saas": "SaaS",
+    "ai": "AI",
+}
+
+
 def _extract_topic_from_request(request: str) -> str:
-    """Extract a short topic label from the user's request."""
+    """
+    Extract a short topic label from the user's request.
+
+    Matching is on word boundaries and longest-first. A bare substring test
+    made "ai" match inside "retail" and "supply chain", so almost every
+    briefing came out titled "Ai Intelligence" whatever it was about.
+    """
     request_lower = request.lower()
-    # Common domain keywords
-    domains = [
-        "quick commerce",
-        "food delivery",
-        "fintech",
-        "edtech",
-        "healthtech",
-        "saas",
-        "ai",
-        "crypto",
-        "ecommerce",
-        "logistics",
-        "mobility",
-        "proptech",
-        "insurtech",
-        "legaltech",
-        "hrtech",
-        "martech",
-    ]
-    for domain in domains:
-        if domain in request_lower:
-            return domain.title()
+    for keyword in sorted(DOMAIN_TOPICS, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(keyword)}\b", request_lower):
+            return DOMAIN_TOPICS[keyword]
     # Fall back to first 60 chars of request
     return request[:60].strip()
 
@@ -163,8 +177,6 @@ def _extract_competitor_names_from_request(request: str) -> List[str]:
     as a fallback.
     """
     # Common patterns: "Monitor X, Y and Z", "Monitor X and Y"
-    import re
-
     # Remove common filler words
     cleaned = re.sub(
         r"\b(monitor|research|analyze|track|generate|briefing|brief|and|a|the|on|for|about|trends|founder\'?s?)\b",

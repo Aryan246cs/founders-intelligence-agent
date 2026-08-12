@@ -419,6 +419,10 @@ class ExecutionLogQueries:
     ):
         try:
             db = get_supabase()
+            # The timestamp is left to the column default. Sending one from the
+            # application meant the insert had to name the timestamp column, and
+            # naming the wrong one ('created_at' vs the schema's 'logged_at')
+            # failed every insert silently — which is what emptied the feed.
             db.table("execution_logs").insert(
                 {
                     "task_id": task_id,
@@ -426,7 +430,6 @@ class ExecutionLogQueries:
                     "level": level,
                     "message": message,
                     "metadata": metadata or {},
-                    "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             ).execute()
         except Exception as e:

@@ -126,7 +126,16 @@ def check_groq(settings) -> None:
         available = {m.id for m in client.models.list().data}
     except Exception as e:
         msg = str(e)
-        if "invalid_api_key" in msg or "401" in msg or "Authentication" in msg:
+        # Groq distinguishes the two, and so should we: an expired key looks
+        # correct, so "invalid" sends you hunting for a typo that isn't there.
+        if "expired_api_key" in msg:
+            bad(
+                "auth",
+                "API key has expired",
+                "the key is well-formed but revoked — create a new one at "
+                "console.groq.com/keys and replace GROQ_API_KEY in backend/.env",
+            )
+        elif "invalid_api_key" in msg or "401" in msg or "Authentication" in msg:
             bad(
                 "auth",
                 "API key rejected",

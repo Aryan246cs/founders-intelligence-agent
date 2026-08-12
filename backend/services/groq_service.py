@@ -97,9 +97,10 @@ async def complete(
         )
     except AuthenticationError as e:
         logger.error("Groq rejected the API key", error=str(e))
+        expired = "expired_api_key" in str(e)
         raise GroqUnavailable(
-            "Groq rejected the API key. Generate a new one at console.groq.com "
-            "and set GROQ_API_KEY in backend/.env."
+            f"Groq {'API key has expired' if expired else 'rejected the API key'}. "
+            "Generate a new one at console.groq.com/keys and set GROQ_API_KEY in backend/.env."
         ) from e
     except APIStatusError as e:
         # 404 on a model id means it was decommissioned — a very common cause of
