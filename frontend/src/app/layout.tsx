@@ -11,8 +11,14 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Founder Intelligence Agent",
-  description: "Autonomous competitive intelligence and execution platform",
+  // A tab title is read at a glance in a crowded tab strip, so the product
+  // name leads and the page name follows.
+  title: {
+    default: "Founder Intel",
+    template: "%s · Founder Intel",
+  },
+  description:
+    "Competitive intelligence for founders — autonomous competitor research, pricing analysis and executive briefings.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

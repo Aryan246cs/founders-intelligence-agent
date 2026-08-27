@@ -9,26 +9,20 @@ import {
   Zap,
   Brain,
   Settings,
-  Slack,
-  Database,
-  Activity,
-  ChevronRight,
   Telescope,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useHealth } from "@/hooks/useHealth";
+import { Logomark } from "@/components/brand/Logomark";
+import { Avatar } from "@/components/brand/Avatar";
+import { WORKSPACE } from "@/lib/workspace";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/briefings", label: "Briefings", icon: FileText },
   { href: "/executions", label: "Executions", icon: Zap },
   { href: "/memory", label: "Memory History", icon: Brain },
-  {
-    href: "/startup-research",
-    label: "Startup Research",
-    icon: Telescope,
-    highlight: true,
-  },
+  { href: "/startup-research", label: "Startup Research", icon: Telescope },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -39,15 +33,17 @@ export function Sidebar() {
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-60 flex flex-col border-r border-zinc-800/60 bg-zinc-950/80 backdrop-blur-xl z-40">
-      {/* Logo */}
-      <div className="px-5 py-5 border-b border-zinc-800/60">
+      {/* Wordmark */}
+      <div className="px-5 h-14 flex items-center border-b border-zinc-800/60">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center shadow-glow-sm">
-            <Activity className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-zinc-100 leading-none">Founder Intel</p>
-            <p className="text-[10px] text-zinc-500 mt-0.5">Agent Platform</p>
+          <Logomark className="w-[18px] h-[18px] text-zinc-200" />
+          <div className="flex items-baseline gap-1.5">
+            <p className="text-[13px] font-semibold text-zinc-100 leading-none tracking-tight">
+              {WORKSPACE.productName}
+            </p>
+            <span className="text-[10px] font-mono text-zinc-600 leading-none">
+              {WORKSPACE.version}
+            </span>
           </div>
         </div>
       </div>
@@ -57,7 +53,6 @@ export function Sidebar() {
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = pathname === item.href;
-          const isHighlight = (item as { highlight?: boolean }).highlight;
           return (
             <Link key={item.href} href={item.href}>
               <motion.div
@@ -65,35 +60,23 @@ export function Sidebar() {
                 className={cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group relative",
                   active
-                    ? "bg-brand-500/10 text-brand-400 border border-brand-500/20"
-                    : isHighlight
-                    ? "text-purple-300 hover:text-purple-200 hover:bg-purple-500/10 border border-purple-500/20 bg-purple-500/5"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                    ? "bg-zinc-800/70 text-zinc-100"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40"
                 )}
               >
                 {active && (
-                  <motion.div
+                  <motion.span
                     layoutId="sidebar-active"
-                    className="absolute inset-0 rounded-lg bg-brand-500/5"
+                    className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-zinc-300"
                   />
                 )}
                 <Icon
                   className={cn(
                     "w-4 h-4 flex-shrink-0",
-                    active
-                      ? "text-brand-400"
-                      : isHighlight
-                      ? "text-purple-400"
-                      : "text-zinc-500 group-hover:text-zinc-300"
+                    active ? "text-zinc-200" : "text-zinc-500 group-hover:text-zinc-300"
                   )}
                 />
                 <span className="relative flex-1">{item.label}</span>
-                {isHighlight && !active && (
-                  <span className="text-[9px] font-bold uppercase tracking-wide bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded-full border border-purple-500/30">
-                    New
-                  </span>
-                )}
-                {active && <ChevronRight className="w-3 h-3 ml-auto text-brand-400/60" />}
               </motion.div>
             </Link>
           );
@@ -143,12 +126,16 @@ export function Sidebar() {
             )}
           </div>
         ))}
-        <div className="pt-2 border-t border-zinc-800/40">
-          <div className="flex items-center gap-2 px-1">
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">F</div>
-            <div>
-              <p className="text-xs font-medium text-zinc-300">Founder</p>
-              <p className="text-[10px] text-zinc-600">Pro Plan</p>
+        <div className="pt-3 mt-1 border-t border-zinc-800/40">
+          <div className="flex items-center gap-2.5 px-1">
+            <Avatar name={WORKSPACE.userName} className="w-6 h-6 text-[10px]" />
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-zinc-300 truncate">
+                {WORKSPACE.userName}
+              </p>
+              <p className="text-[10px] text-zinc-600 truncate">
+                {WORKSPACE.workspaceName}
+              </p>
             </div>
           </div>
         </div>

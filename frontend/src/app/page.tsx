@@ -123,13 +123,13 @@ export default function Dashboard() {
         {/* Main content grid */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           {/* Left: Agents + Briefings */}
-          <div className="xl:col-span-2 space-y-6">
+          <div className="xl:col-span-2 min-w-0 space-y-6">
             <AgentStatusGrid agents={agents} />
             <RecentBriefingsPanel briefings={briefings} />
           </div>
 
           {/* Right: Architecture + Activity */}
-          <div className="space-y-6">
+          <div className="min-w-0 space-y-6">
             <ActivityFeed events={events} />
             <ArchitecturePanel />
           </div>

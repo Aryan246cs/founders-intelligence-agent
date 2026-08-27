@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Bell, Zap, ChevronDown } from "lucide-react";
+import { Search, Bell, ChevronDown } from "lucide-react";
 import { useActivityFeed } from "@/hooks/useDashboard";
 import { useAgents } from "@/hooks/useAgents";
+import { Avatar } from "@/components/brand/Avatar";
+import { WORKSPACE } from "@/lib/workspace";
 
 export function Topbar() {
   const [showNotifs, setShowNotifs] = useState(false);
@@ -30,26 +32,25 @@ export function Topbar() {
       </div>
 
       <div className="flex items-center gap-3 ml-auto">
-        {/* AI Status */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/5 border border-emerald-500/15">
-          <motion.div
-            animate={{ scale: [1, 1.3, 1] }}
-            transition={{ duration: 2, repeat: Infinity }}
-            className="w-1.5 h-1.5 rounded-full bg-emerald-400"
-            style={{ boxShadow: "0 0 6px rgba(52,211,153,0.8)" }}
+        {/* Agent status — one line, no decorative duplicate */}
+        <div className="flex items-center gap-2 pr-1">
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              hasRunning
+                ? "bg-brand-400"
+                : activeCount > 0
+                ? "bg-emerald-400"
+                : "bg-zinc-600"
+            }`}
           />
-          <span className="text-xs font-medium text-emerald-400">
-            {activeCount > 0 ? `${activeCount} Agents Active` : "Agents Idle"}
+          <span className="text-xs text-zinc-400 tabular-nums">
+            {hasRunning
+              ? "Agent running"
+              : activeCount > 0
+              ? `${activeCount} agents active`
+              : "Agents idle"}
           </span>
         </div>
-
-        {/* Agent pulse — only when something is running */}
-        {hasRunning && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/5 border border-brand-500/15">
-            <Zap className="w-3.5 h-3.5 text-brand-400" />
-            <span className="text-xs font-medium text-brand-400">Running</span>
-          </div>
-        )}
 
         {/* Notifications */}
         <div className="relative">
@@ -59,7 +60,7 @@ export function Topbar() {
           >
             <Bell className="w-4 h-4 text-zinc-400" />
             {unread > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-500 text-[9px] font-bold text-white flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-zinc-200 text-[9px] font-semibold text-zinc-900 flex items-center justify-center tabular-nums">
                 {unread}
               </span>
             )}
@@ -90,10 +91,10 @@ export function Topbar() {
           </AnimatePresence>
         </div>
 
-        {/* Profile */}
+        {/* Account */}
         <button className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-zinc-800/50 transition-colors">
-          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">F</div>
-          <span className="text-xs font-medium text-zinc-300">Founder</span>
+          <Avatar name={WORKSPACE.userName} className="w-6 h-6 text-[10px]" />
+          <span className="text-xs font-medium text-zinc-300">{WORKSPACE.userName}</span>
           <ChevronDown className="w-3 h-3 text-zinc-500" />
         </button>
       </div>
